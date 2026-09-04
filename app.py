@@ -29,52 +29,11 @@ def is_youtube(url):
     return 'youtube.com' in url or 'youtu.be' in url
 
 
-def pick_best_format(info):
-    # 1) Direct URL check
-    video_url = info.get('url')
-    if video_url:
-        return video_url
-
-    # 2) Requested downloads check
-    rd = info.get('requested_downloads')
-    if rd:
-        for item in rd:
-            if item.get('url'):
-                return item['url']
-
-    # 3) Automatic format selection from available formats list
-    formats = info.get('formats') or []
-    if not formats:
-        return None
-
-    # Combined video + audio streams preferred
-    combined = [
-        f for f in formats
-        if f.get('vcodec') not in (None, 'none')
-        and f.get('acodec') not in (None, 'none')
-        and f.get('url')
-    ]
-    if combined:
-        combined.sort(key=lambda f: f.get('height') or 0)
-        return combined[-1]['url']
-
-    # Fallback to video-only stream
-    video_only = [f for f in formats if f.get('vcodec') not in (None, 'none') and f.get('url')]
-    if video_only:
-        video_only.sort(key=lambda f: f.get('height') or 0)
-        return video_only[-1]['url']
-
-    # Last resort fallback
-    for f in reversed(formats):
-        if f.get('url'):
-            return f['url']
-
-    return None
-
-
 def extract_video_url(url):
-    # Strict format option nikaleli chhe jethi error na aave
-    ydl_opts = {'noplaylist': True}
+    ydl_opts = {
+        'noplaylist': True,
+        'format': 'best',  # Single merged file - avoids needing FFmpeg on cloud servers
+    }
 
     if is_youtube(url):
         cookies_path = get_writable_cookies_path()
@@ -83,7 +42,17 @@ def extract_video_url(url):
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
-        video_url = pick_best_format(info)
+        video_url = info.get('url')
+        
+        # Fallback check if top-level url isn't a direct progressive stream
+        if not video_url and 'formats' in info:
+            for f in reversed(info.get('formats', [])):
+                if f.get('url') and f.get('acodec') != 'none' and f.get('vcodec') != 'none':
+                    video_url = f.get('url')
+                    break
+        
+        if not video_url:
+            video_url = info.get('url')
 
         title = info.get('title') or 'video'
         safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-')).strip()
@@ -119,9 +88,8 @@ def stream():
             }), 500
 
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                           '(KHTML, like Gecko) Chrome/120.0 Safari/537.36',
-            'Referer': 'https://twitter.com/'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+            'Referer': 'https://www.youtube.com/'
         }
 
         upstream = requests.get(video_url, headers=headers, stream=True, timeout=30)
