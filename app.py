@@ -30,25 +30,24 @@ def is_youtube(url):
 
 
 def pick_best_format(info):
-    # 1) Some extractors put a single direct URL right on the top-level info
+    # 1) Direct URL check
     video_url = info.get('url')
     if video_url:
         return video_url
 
-    # 2) requested_downloads (populated by yt-dlp for some extractors)
+    # 2) Requested downloads check
     rd = info.get('requested_downloads')
     if rd:
         for item in rd:
             if item.get('url'):
                 return item['url']
 
-    # 3) Manually scan the formats list ourselves
+    # 3) Automatic format selection from available formats list
     formats = info.get('formats') or []
     if not formats:
         return None
 
-    # Prefer a combined (has both video AND audio) progressive stream,
-    # highest resolution first.
+    # Combined video + audio streams preferred
     combined = [
         f for f in formats
         if f.get('vcodec') not in (None, 'none')
@@ -59,13 +58,13 @@ def pick_best_format(info):
         combined.sort(key=lambda f: f.get('height') or 0)
         return combined[-1]['url']
 
-    # Fall back to the best video-only stream
+    # Fallback to video-only stream
     video_only = [f for f in formats if f.get('vcodec') not in (None, 'none') and f.get('url')]
     if video_only:
         video_only.sort(key=lambda f: f.get('height') or 0)
         return video_only[-1]['url']
 
-    # Absolute last resort: whatever the final entry is.
+    # Last resort fallback
     for f in reversed(formats):
         if f.get('url'):
             return f['url']
@@ -74,10 +73,8 @@ def pick_best_format(info):
 
 
 def extract_video_url(url):
-    ydl_opts = {
-        'noplaylist': True,
-        'format': 'bestvideo+bestaudio/best'
-    }
+    # Strict format option nikaleli chhe jethi error na aave
+    ydl_opts = {'noplaylist': True}
 
     if is_youtube(url):
         cookies_path = get_writable_cookies_path()
@@ -86,7 +83,6 @@ def extract_video_url(url):
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
-
         video_url = pick_best_format(info)
 
         title = info.get('title') or 'video'
@@ -148,4 +144,3 @@ def stream():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-
