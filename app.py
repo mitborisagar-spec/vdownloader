@@ -14,8 +14,6 @@ WRITABLE_COOKIES_PATH = '/tmp/cookies.txt'
 
 
 def get_writable_cookies_path():
-    """Copy the read-only secret cookies file to a writable temp path,
-    since yt-dlp needs to write updated cookies back after each request."""
     if os.path.exists(SECRET_COOKIES_PATH):
         try:
             shutil.copyfile(SECRET_COOKIES_PATH, WRITABLE_COOKIES_PATH)
@@ -32,7 +30,8 @@ def is_youtube(url):
 def extract_video_url(url):
     ydl_opts = {
         'noplaylist': True,
-        'format': 'best',  # Single merged file - avoids needing FFmpeg on cloud servers
+        # Format 18 is standard 360p combined (video+audio) which doesn't require FFmpeg
+        'format': '18/best[height<=360]/best',
     }
 
     if is_youtube(url):
@@ -44,12 +43,17 @@ def extract_video_url(url):
         info = ydl.extract_info(url, download=False)
         video_url = info.get('url')
         
-        # Fallback check if top-level url isn't a direct progressive stream
         if not video_url and 'formats' in info:
-            for f in reversed(info.get('formats', [])):
-                if f.get('url') and f.get('acodec') != 'none' and f.get('vcodec') != 'none':
+            for f in info.get('formats', []):
+                if f.get('format_id') == '18' and f.get('url'):
                     video_url = f.get('url')
                     break
+            
+            if not video_url:
+                for f in reversed(info.get('formats', [])):
+                    if f.get('url') and f.get('acodec') != 'none' and f.get('vcodec') != 'none':
+                        video_url = f.get('url')
+                        break
         
         if not video_url:
             video_url = info.get('url')
