@@ -42,8 +42,7 @@ def pick_best_format(info):
             if item.get('url'):
                 return item['url']
 
-    # 3) Manually scan the formats list ourselves - no format selector was
-    # passed to yt-dlp, so this list is complete and nothing has raised.
+    # 3) Manually scan the formats list ourselves
     formats = info.get('formats') or []
     if not formats:
         return None
@@ -60,9 +59,7 @@ def pick_best_format(info):
         combined.sort(key=lambda f: f.get('height') or 0)
         return combined[-1]['url']
 
-    # Nothing combined exists (adaptive-only video) - fall back to the
-    # best video-only stream so the user at least gets something playable
-    # in most modern players/downloaders.
+    # Fall back to the best video-only stream
     video_only = [f for f in formats if f.get('vcodec') not in (None, 'none') and f.get('url')]
     if video_only:
         video_only.sort(key=lambda f: f.get('height') or 0)
@@ -77,12 +74,10 @@ def pick_best_format(info):
 
 
 def extract_video_url(url):
-    # Deliberately NOT setting 'format' here - a strict selector can make
-    # yt-dlp raise "Requested format is not available" internally before we
-    # ever get a chance to inspect the formats list ourselves. Instead we
-    # pull the full info (including every available format) and choose the
-    # best one manually in pick_best_format().
-    ydl_opts = {'noplaylist': True}
+    ydl_opts = {
+        'noplaylist': True,
+        'format': 'bestvideo+bestaudio/best'
+    }
 
     if is_youtube(url):
         cookies_path = get_writable_cookies_path()
@@ -153,3 +148,4 @@ def stream():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
