@@ -11,9 +11,8 @@ CORS(app)
 
 SECRET_COOKIES_PATH = '/etc/secrets/cookies.txt'
 WRITABLE_COOKIES_PATH = '/tmp/cookies.txt'
+POT_SERVER_URL = 'https://vdownloader-pot.onrender.com'
 
-# Extensions/markers that mean "this is not actually a video" - YouTube's
-# storyboard/scrubbing-preview sprite sheets are the classic culprit.
 NON_VIDEO_EXTS = {'webp', 'mhtml', 'jpg', 'jpeg', 'png', 'gif'}
 
 
@@ -41,8 +40,6 @@ def is_real_video_format(f):
     note = (f.get('format_note') or '').lower()
     if 'storyboard' in note or format_id.startswith('sb'):
         return False
-    # A real video/audio format must have at least a video OR audio codec -
-    # storyboards and thumbnails have neither.
     vcodec = f.get('vcodec')
     acodec = f.get('acodec')
     if (vcodec in (None, 'none')) and (acodec in (None, 'none')):
@@ -68,7 +65,6 @@ def pick_best_format(formats):
         video_only.sort(key=lambda f: f.get('height') or 0)
         return video_only[-1]['url']
 
-    # Only audio-only formats remain - still better than nothing.
     return valid[-1]['url']
 
 
@@ -79,6 +75,12 @@ def extract_video_url(url):
         cookies_path = get_writable_cookies_path()
         if cookies_path:
             ydl_opts['cookiefile'] = cookies_path
+
+        # Point yt-dlp's PO Token plugin at our deployed HTTP provider
+        # (bgutil-ytdlp-pot-provider) instead of the default localhost.
+        ydl_opts['extractor_args'] = {
+            'youtubepot-bgutilhttp': {'base_url': [POT_SERVER_URL]}
+        }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False, process=False)
@@ -122,8 +124,6 @@ def extract_video_url(url):
                     }
                     for f in formats[:8]
                 ],
-                'top_level_url_present': bool(info.get('url')),
-                'top_level_ext': info.get('ext'),
             }
 
         return video_url, filename, debug
