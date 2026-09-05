@@ -3,3 +3,4 @@ yt-dlp>=2026.8.19
 flask-cors
 gunicorn
 requests
+bgutil-ytdlp-pot-provider
