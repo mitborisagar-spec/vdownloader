@@ -92,14 +92,21 @@ class LogCapture:
 # =========================================================
 # BUILD YT-DLP OPTIONS
 # =========================================================
+
 def build_ydl_options(temp_dir, log_capture, url):
 
     # FFmpeg supplied by imageio-ffmpeg
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 
+    # YouTube mate bv*+ba/b, bije platforms (Instagram, FB, etc.) mate 'best'
+    if is_youtube(url):
+        video_format = 'bv*+ba/b'
+    else:
+        video_format = 'best'
+
     ydl_opts = {
         'noplaylist': True,
-        'format': 'bv*+ba/b',
+        'format': video_format,
         'merge_output_format': 'mp4',
         'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
         'ffmpeg_location': ffmpeg_path,
@@ -136,6 +143,7 @@ def build_ydl_options(temp_dir, log_capture, url):
 
 
     return ydl_opts
+ 
 
 
 
