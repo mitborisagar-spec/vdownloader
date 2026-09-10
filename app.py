@@ -99,20 +99,20 @@ def build_ydl_options(temp_dir, log_capture, url):
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 
     ydl_opts = {
-    'noplaylist': True,
-    'format': 'bv*+ba/b',
-    'merge_output_format': 'mp4',
-    'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
-    'ffmpeg_location': ffmpeg_path,
-    'logger': log_capture,
-    'verbose': True,
-    'retries': 2,
-    'fragment_retries': 2,
+        'noplaylist': True,
+        'format': 'bv*+ba/b',
+        'merge_output_format': 'mp4',
+        'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
+        'ffmpeg_location': ffmpeg_path,
+        'logger': log_capture,
+        'verbose': True,
+        'retries': 2,
+        'fragment_retries': 2,
 
-    # YouTube JS challenge solver
-    'js_runtimes': {
-        'deno': _deno_bin
-    },
+        # YouTube JS challenge solver
+        'js_runtimes': {
+            'deno': _deno_bin
+        },
     }
 
 
@@ -127,47 +127,14 @@ def build_ydl_options(temp_dir, log_capture, url):
         if cookies_path:
             ydl_opts['cookiefile'] = cookies_path
 
-
-        # IMPORTANT:
-        # Try mweb first instead of the problematic web client.
-        #
-        # mweb is recommended with a PO Token provider.
-        #
-        # "default" is kept as fallback so yt-dlp can use
-        # another suitable client when mweb is unavailable.
         ydl_opts['extractor_args'] = {
-
-            'youtube': [
-                if is_youtube(url):
-
-    cookies_path = get_writable_cookies_path()
-
-    if cookies_path:
-        ydl_opts['cookiefile'] = cookies_path
-
-    ydl_opts['extractor_args'] = {
-        'youtubepot-bgutilhttp': {
-            'base_url': [
-                'https://vdownloader-pot.onrender.com'
-            ]
-        }
-    }
-            ],
-
-            'youtubepot-bgutilhttp': [
-                'base_url=https://vdownloader-pot.onrender.com'
-            ]
-
+            'youtubepot-bgutilhttp': {
+                'base_url': [
+                    'https://vdownloader-pot.onrender.com'
+                ]
+            }
         }
 
-
-    # =====================================================
-    # INSTAGRAM / FACEBOOK / TIKTOK
-    # =====================================================
-    #
-    # Nothing special is added for these platforms.
-    # They continue using the normal yt-dlp extraction.
-    #
 
     return ydl_opts
 
