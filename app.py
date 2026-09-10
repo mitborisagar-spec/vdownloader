@@ -95,48 +95,42 @@ class LogCapture:
 
 def build_ydl_options(temp_dir, log_capture, url):
 
-    # Get FFmpeg supplied by imageio-ffmpeg
+    # FFmpeg supplied by imageio-ffmpeg
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 
     ydl_opts = {
-
         'noplaylist': True,
 
-        # IMPORTANT:
         # Best video + best audio
-        # Fallback to best combined format
+        # Fallback to best combined
         'format': 'bv*+ba/b',
 
-        # Merge result into MP4
+        # Merge audio + video into MP4
         'merge_output_format': 'mp4',
 
-        # Temporary output directory
+        # Temporary output
         'outtmpl': os.path.join(
             temp_dir,
             '%(id)s.%(ext)s'
         ),
 
-        # FFmpeg location
+        # FFmpeg
         'ffmpeg_location': ffmpeg_path,
 
-        # Logging
+        # Logs
         'logger': log_capture,
         'verbose': True,
 
-        # Retry settings
+        # Retry
         'retries': 2,
         'fragment_retries': 2,
 
-        # Don't download playlist
-        'noplaylist': True,
-
-        # Keep downloaded fragments clean
         'continuedl': True,
     }
 
 
     # =====================================================
-    # YOUTUBE SETTINGS
+    # YOUTUBE ONLY
     # =====================================================
 
     if is_youtube(url):
@@ -147,27 +141,33 @@ def build_ydl_options(temp_dir, log_capture, url):
             ydl_opts['cookiefile'] = cookies_path
 
 
-        # Your existing PO Token configuration
+        # IMPORTANT:
+        # Try mweb first instead of the problematic web client.
+        #
+        # mweb is recommended with a PO Token provider.
+        #
+        # "default" is kept as fallback so yt-dlp can use
+        # another suitable client when mweb is unavailable.
         ydl_opts['extractor_args'] = {
 
-            'youtubepot-bgutilhttp': {
+            'youtube': [
+                'player_client=mweb,default'
+            ],
 
-                'base_url': [
-                    'https://vdownloader-pot.onrender.com'
-                ]
-
-            },
-
-            'youtube': {
-
-                'getpot_bgutil_baseurl': [
-                    'https://vdownloader-pot.onrender.com'
-                ]
-
-            }
+            'youtubepot-bgutilhttp': [
+                'base_url=https://vdownloader-pot.onrender.com'
+            ]
 
         }
 
+
+    # =====================================================
+    # INSTAGRAM / FACEBOOK / TIKTOK
+    # =====================================================
+    #
+    # Nothing special is added for these platforms.
+    # They continue using the normal yt-dlp extraction.
+    #
 
     return ydl_opts
 
