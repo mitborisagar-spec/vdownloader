@@ -138,7 +138,7 @@ def build_ydl_options(temp_dir, log_capture, url):
         ydl_opts['extractor_args'] = {
 
             'youtube': [
-                'if is_youtube(url):
+                if is_youtube(url):
 
     cookies_path = get_writable_cookies_path()
 
@@ -151,7 +151,7 @@ def build_ydl_options(temp_dir, log_capture, url):
                 'https://vdownloader-pot.onrender.com'
             ]
         }
-    }'
+    }
             ],
 
             'youtubepot-bgutilhttp': [
