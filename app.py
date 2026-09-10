@@ -97,18 +97,27 @@ def build_ydl_options(temp_dir, log_capture, url):
 
     # Get FFmpeg supplied by imageio-ffmpeg
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-
-    # Instagram mate 'b' (combined file) ane YouTube/FB mate 'bv*+ba/b'
     url_lower = url.lower()
-    if 'instagram.com' in url_lower:
-        selected_format = 'b'
-    else:
-        selected_format = 'bv*+ba/b'
 
+    # Instagram mate alag options jethi audio drop na thay
+    if 'instagram.com' in url_lower:
+        ydl_opts = {
+            'noplaylist': True,
+            'format': 'best',
+            'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
+            'ffmpeg_location': ffmpeg_path,
+            'logger': log_capture,
+            'verbose': True,
+            'retries': 2,
+            'fragment_retries': 2,
+        }
+        return ydl_opts
+
+    # YouTube ane Facebook mate juna options
     ydl_opts = {
 
         'noplaylist': True,
-        'format': selected_format,
+        'format': 'bv*+ba/b',
         'merge_output_format': 'mp4',
 
         'outtmpl': os.path.join(
@@ -124,6 +133,7 @@ def build_ydl_options(temp_dir, log_capture, url):
         'continuedl': True,
     }
 
+
     # =====================================================
     # YOUTUBE SETTINGS
     # =====================================================
@@ -135,21 +145,27 @@ def build_ydl_options(temp_dir, log_capture, url):
         if cookies_path:
             ydl_opts['cookiefile'] = cookies_path
 
+
         ydl_opts['extractor_args'] = {
 
             'youtubepot-bgutilhttp': {
+
                 'base_url': [
                     'https://vdownloader-pot.onrender.com'
                 ]
+
             },
 
             'youtube': {
+
                 'getpot_bgutil_baseurl': [
                     'https://vdownloader-pot.onrender.com'
                 ]
+
             }
 
         }
+
 
     return ydl_opts
 
