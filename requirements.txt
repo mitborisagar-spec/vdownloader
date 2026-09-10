@@ -1,5 +1,6 @@
 flask
 yt-dlp>=2026.8.19
+yt-dlp-ejs
 flask-cors
 gunicorn
 requests
