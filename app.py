@@ -98,18 +98,12 @@ def build_ydl_options(temp_dir, log_capture, url):
     # Get FFmpeg supplied by imageio-ffmpeg
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 
-    # Instagram mate ane YouTube mate alag alag format jethi audio miss na thay
-    if is_youtube(url):
-        selected_format = 'bv*+ba/b'
-    else:
-        selected_format = 'bestvideo+bestaudio/best'
-
     ydl_opts = {
 
         'noplaylist': True,
 
-        # Platform mujab no format
-        'format': selected_format,
+        # Universal format jo YouTube ane Instagram banne mate audio/video merge kare
+        'format': 'bestvideo+bestaudio/best',
 
         # Merge result into MP4
         'merge_output_format': 'mp4',
@@ -171,8 +165,6 @@ def build_ydl_options(temp_dir, log_capture, url):
 
 
     return ydl_opts
-
- 
 
 
 
