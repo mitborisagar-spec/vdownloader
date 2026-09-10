@@ -92,7 +92,6 @@ class LogCapture:
 # =========================================================
 # BUILD YT-DLP OPTIONS
 # =========================================================
-
 def build_ydl_options(temp_dir, log_capture, url):
 
     # FFmpeg supplied by imageio-ffmpeg
@@ -111,7 +110,7 @@ def build_ydl_options(temp_dir, log_capture, url):
 
         # YouTube JS challenge solver
         'js_runtimes': {
-            'deno': _deno_bin
+            'deno': {}
         },
     }
 
@@ -137,6 +136,7 @@ def build_ydl_options(temp_dir, log_capture, url):
 
 
     return ydl_opts
+
 
 
 # =========================================================
