@@ -98,37 +98,31 @@ def build_ydl_options(temp_dir, log_capture, url):
     # Get FFmpeg supplied by imageio-ffmpeg
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 
+    # Instagram mate 'b' (combined file) ane YouTube/FB mate 'bv*+ba/b'
+    url_lower = url.lower()
+    if 'instagram.com' in url_lower:
+        selected_format = 'b'
+    else:
+        selected_format = 'bv*+ba/b'
+
     ydl_opts = {
 
         'noplaylist': True,
-
-        # Universal format jo YouTube ane Instagram banne mate audio/video merge kare
-        'format': 'bestvideo+bestaudio/best',
-
-        # Merge result into MP4
+        'format': selected_format,
         'merge_output_format': 'mp4',
 
-        # Temporary output directory
         'outtmpl': os.path.join(
             temp_dir,
             '%(id)s.%(ext)s'
         ),
 
-        # FFmpeg location
         'ffmpeg_location': ffmpeg_path,
-
-        # Logging
         'logger': log_capture,
         'verbose': True,
-
-        # Retry settings
         'retries': 2,
         'fragment_retries': 2,
-
-        # Keep downloaded fragments clean
         'continuedl': True,
     }
-
 
     # =====================================================
     # YOUTUBE SETTINGS
@@ -141,28 +135,21 @@ def build_ydl_options(temp_dir, log_capture, url):
         if cookies_path:
             ydl_opts['cookiefile'] = cookies_path
 
-
-        # Your existing PO Token configuration
         ydl_opts['extractor_args'] = {
 
             'youtubepot-bgutilhttp': {
-
                 'base_url': [
                     'https://vdownloader-pot.onrender.com'
                 ]
-
             },
 
             'youtube': {
-
                 'getpot_bgutil_baseurl': [
                     'https://vdownloader-pot.onrender.com'
                 ]
-
             }
 
         }
-
 
     return ydl_opts
 
