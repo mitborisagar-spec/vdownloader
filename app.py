@@ -95,35 +95,49 @@ class LogCapture:
 
 def build_ydl_options(temp_dir, log_capture, url):
 
-    # FFmpeg supplied by imageio-ffmpeg
+    # Get FFmpeg supplied by imageio-ffmpeg
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 
-    # YouTube mate bv*+ba/b, bije platforms (Instagram, FB, etc.) mate 'best'
+    # Instagram mate ane YouTube mate alag alag format jethi audio miss na thay
     if is_youtube(url):
-        video_format = 'bv*+ba/b'
+        selected_format = 'bv*+ba/b'
     else:
-        video_format = 'best'
+        selected_format = 'bestvideo+bestaudio/best'
 
     ydl_opts = {
+
         'noplaylist': True,
-        'format': video_format,
+
+        # Platform mujab no format
+        'format': selected_format,
+
+        # Merge result into MP4
         'merge_output_format': 'mp4',
-        'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
+
+        # Temporary output directory
+        'outtmpl': os.path.join(
+            temp_dir,
+            '%(id)s.%(ext)s'
+        ),
+
+        # FFmpeg location
         'ffmpeg_location': ffmpeg_path,
+
+        # Logging
         'logger': log_capture,
         'verbose': True,
+
+        # Retry settings
         'retries': 2,
         'fragment_retries': 2,
 
-        # YouTube JS challenge solver
-        'js_runtimes': {
-            'deno': {}
-        },
+        # Keep downloaded fragments clean
+        'continuedl': True,
     }
 
 
     # =====================================================
-    # YOUTUBE ONLY
+    # YOUTUBE SETTINGS
     # =====================================================
 
     if is_youtube(url):
@@ -133,16 +147,31 @@ def build_ydl_options(temp_dir, log_capture, url):
         if cookies_path:
             ydl_opts['cookiefile'] = cookies_path
 
+
+        # Your existing PO Token configuration
         ydl_opts['extractor_args'] = {
+
             'youtubepot-bgutilhttp': {
+
                 'base_url': [
                     'https://vdownloader-pot.onrender.com'
                 ]
+
+            },
+
+            'youtube': {
+
+                'getpot_bgutil_baseurl': [
+                    'https://vdownloader-pot.onrender.com'
+                ]
+
             }
+
         }
 
 
     return ydl_opts
+
  
 
 
