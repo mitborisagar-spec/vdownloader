@@ -99,21 +99,23 @@ def build_ydl_options(temp_dir, log_capture, url):
 
     # Common options for all platforms
     ydl_opts = {
-        'noplaylist': True,
-        'format': 'bv*+ba/b',
-        'merge_output_format': 'mp4',
+    'noplaylist': True,
 
-        'outtmpl': os.path.join(
-            temp_dir,
-            '%(id)s.%(ext)s'
-        ),
+    # Video + Audio
+    'format': 'bestvideo+bestaudio/best',
+    'merge_output_format': 'mp4',
 
-        'ffmpeg_location': ffmpeg_path,
-        'logger': log_capture,
-        'verbose': True,
-        'retries': 2,
-        'fragment_retries': 2,
-        'continuedl': True,
+    'outtmpl': os.path.join(
+        temp_dir,
+        '%(id)s.%(ext)s'
+    ),
+
+    'ffmpeg_location': ffmpeg_path,
+    'logger': log_capture,
+    'verbose': True,
+    'retries': 3,
+    'fragment_retries': 3,
+    'continuedl': True,
     }
 
     # YouTube settings
