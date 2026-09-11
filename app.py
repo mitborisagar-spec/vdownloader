@@ -94,8 +94,10 @@ class LogCapture:
 # =========================================================
 def build_ydl_options(temp_dir, log_capture, url):
 
+    # Get FFmpeg supplied by imageio-ffmpeg
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 
+    # Common options for all platforms
     ydl_opts = {
         'noplaylist': True,
         'format': 'bv*+ba/b',
@@ -114,12 +116,8 @@ def build_ydl_options(temp_dir, log_capture, url):
         'continuedl': True,
     }
 
-
-    # =====================================================
-    # YOUTUBE SETTINGS
-    # =====================================================
-
-if is_youtube(url):
+    # YouTube settings
+    if is_youtube(url):
 
         cookies_path = get_writable_cookies_path()
 
