@@ -92,30 +92,11 @@ class LogCapture:
 # =========================================================
 # BUILD YT-DLP OPTIONS
 # =========================================================
-
 def build_ydl_options(temp_dir, log_capture, url):
 
-    # Get FFmpeg supplied by imageio-ffmpeg
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-    url_lower = url.lower()
 
-    # Instagram mate alag options jethi audio drop na thay
-    if 'instagram.com' in url_lower:
-        ydl_opts = {
-            'noplaylist': True,
-            'format': 'best',
-            'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
-            'ffmpeg_location': ffmpeg_path,
-            'logger': log_capture,
-            'verbose': True,
-            'retries': 2,
-            'fragment_retries': 2,
-        }
-        return ydl_opts
-
-    # YouTube ane Facebook mate juna options
     ydl_opts = {
-
         'noplaylist': True,
         'format': 'bv*+ba/b',
         'merge_output_format': 'mp4',
@@ -138,34 +119,26 @@ def build_ydl_options(temp_dir, log_capture, url):
     # YOUTUBE SETTINGS
     # =====================================================
 
-    if is_youtube(url):
+if is_youtube(url):
 
         cookies_path = get_writable_cookies_path()
 
         if cookies_path:
             ydl_opts['cookiefile'] = cookies_path
 
-
         ydl_opts['extractor_args'] = {
-
             'youtubepot-bgutilhttp': {
-
                 'base_url': [
                     'https://vdownloader-pot.onrender.com'
                 ]
-
             },
 
             'youtube': {
-
                 'getpot_bgutil_baseurl': [
                     'https://vdownloader-pot.onrender.com'
                 ]
-
             }
-
         }
-
 
     return ydl_opts
 
