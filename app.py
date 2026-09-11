@@ -141,9 +141,6 @@ def build_ydl_options(temp_dir, log_capture, url):
         }
 
     return ydl_opts
-
-
-
 # =========================================================
 # MAIN DOWNLOAD + MERGE FUNCTION
 # =========================================================
@@ -158,46 +155,121 @@ def download_and_merge(url, temp_dir):
         url
     )
 
-
     try:
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
 
-            # Download video + audio
-            # FFmpeg automatically merges them
+            # =================================================
+            # FIRST: EXTRACT INFORMATION
+            # =================================================
+
             info = ydl.extract_info(
                 url,
+                download=False
+            )
+
+            # =================================================
+            # FORMAT DEBUG
+            # =================================================
+
+            formats = info.get('formats') or []
+
+            print("\n===== FORMAT DEBUG =====")
+
+            for f in formats:
+
+                print(
+                    "FORMAT:",
+                    f.get('format_id'),
+                    "| EXT:",
+                    f.get('ext'),
+                    "| RES:",
+                    f.get('resolution'),
+                    "| VCODEC:",
+                    f.get('vcodec'),
+                    "| ACODEC:",
+                    f.get('acodec'),
+                    "| FPS:",
+                    f.get('fps'),
+                    "| TBR:",
+                    f.get('tbr')
+                )
+
+            print("===== END FORMAT DEBUG =====\n")
+
+            # =================================================
+            # CHECK WHETHER AUDIO FORMAT EXISTS
+            # =================================================
+
+            audio_formats = [
+                f for f in formats
+                if f.get('acodec')
+                and f.get('acodec') != 'none'
+            ]
+
+            video_formats = [
+                f for f in formats
+                if f.get('vcodec')
+                and f.get('vcodec') != 'none'
+            ]
+
+            print(
+                "VIDEO FORMATS:",
+                len(video_formats)
+            )
+
+            print(
+                "AUDIO FORMATS:",
+                len(audio_formats)
+            )
+
+            if audio_formats:
+
+                print(
+                    "BEST AUDIO:",
+                    audio_formats[-1].get('format_id'),
+                    audio_formats[-1].get('acodec')
+                )
+
+            else:
+
+                print(
+                    "WARNING: NO AUDIO FORMAT FOUND"
+                )
+
+            # =================================================
+            # DOWNLOAD VIDEO + AUDIO
+            # =================================================
+
+            info = ydl.process_ie_result(
+                info,
                 download=True
             )
 
+            # =================================================
+            # SAFE FILE NAME
+            # =================================================
 
             title = info.get(
                 'title',
                 'video'
             )
 
+            safe_title = ''.join(
+                c
+                for c in title
+                if c.isalnum()
+                or c in (' ', '_', '-')
+            ).strip()
 
-        # =================================================
-        # SAFE FILE NAME
-        # =================================================
+            filename = (
+                safe_title[:80]
+                or 'video'
+            ) + '.mp4'
 
-        safe_title = ''.join(
-            c
-            for c in title
-            if c.isalnum()
-            or c in (' ', '_', '-')
-        ).strip()
-
-
-        filename = (
-            safe_title[:80]
-            or 'video'
-        ) + '.mp4'
-
-
-        # =================================================
+        # =====================================================
         # FIND MERGED MP4
-        # =================================================
+        # =====================================================
 
         mp4_files = glob.glob(
             os.path.join(
@@ -205,7 +277,6 @@ def download_and_merge(url, temp_dir):
                 '*.mp4'
             )
         )
-
 
         if mp4_files:
 
@@ -216,8 +287,10 @@ def download_and_merge(url, temp_dir):
 
         else:
 
-            # Sometimes extension may differ.
-            # Find any generated media file.
+            # =================================================
+            # FALLBACK: ANY MEDIA FILE
+            # =================================================
+
             media_files = [
                 f
                 for f in glob.glob(
@@ -229,44 +302,42 @@ def download_and_merge(url, temp_dir):
                 if os.path.isfile(f)
             ]
 
-
             if not media_files:
 
                 return None, None, {
                     'error': 'No downloaded file found.',
                     'ffmpeg': imageio_ffmpeg.get_ffmpeg_exe(),
-                    'logs': log_capture.lines[-30:]
+                    'logs': log_capture.lines[-50:]
                 }
-
 
             output_file = max(
                 media_files,
                 key=os.path.getsize
             )
 
-
-        # =================================================
+        # =====================================================
         # BASIC FILE CHECK
-        # =================================================
+        # =====================================================
 
         if not os.path.exists(output_file):
 
             return None, None, {
                 'error': 'Output file does not exist.',
-                'logs': log_capture.lines[-30:]
+                'logs': log_capture.lines[-50:]
             }
-
 
         if os.path.getsize(output_file) == 0:
 
             return None, None, {
                 'error': 'Output file is empty.',
-                'logs': log_capture.lines[-30:]
+                'logs': log_capture.lines[-50:]
             }
 
+        # =====================================================
+        # RETURN SUCCESS
+        # =====================================================
 
         return output_file, filename, None
-
 
     except Exception as e:
 
@@ -287,8 +358,8 @@ def download_and_merge(url, temp_dir):
                 imageio_ffmpeg.get_ffmpeg_exe()
             ),
 
-            'logs': log_capture.lines[-30:]
-        }
+            'logs': log_capture.lines[-50:]
+                }
 
 
 # =========================================================
