@@ -515,12 +515,7 @@ def download():
         "status": "success",
         "url": proxy_url
     })
-
-
-    # Create temporary directory
-    temp_dir = tempfile.mkdtemp(
-        prefix='vdownloader_'
-    )
+    
 
 
     try:
