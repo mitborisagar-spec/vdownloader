@@ -4,7 +4,6 @@ import os
 import shutil
 import tempfile
 import glob
-import subprocess
 import imageio_ffmpeg
 from flask_cors import CORS
 from urllib.parse import quote
@@ -30,10 +29,7 @@ if os.path.isdir(_deno_bin):
 
 app = Flask(__name__)
 CORS(app)
-      resources={r"/*": {"origins": "*"}},
-    methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Accept"]
-)
+
 
 # =========================================================
 # COOKIE SETTINGS
@@ -109,6 +105,8 @@ def build_ydl_options(temp_dir, log_capture, url, use_cookies=True, format_selec
 
     ydl_opts = {
         'noplaylist': True,
+        # The selector is supplied per attempt so Instagram can be tried
+        # as both a single muxed file and as separate video + audio.
         'format': format_selector or 'bv*+ba/b',
         'merge_output_format': 'mp4',
         'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
@@ -167,81 +165,80 @@ def build_ydl_options(temp_dir, log_capture, url, use_cookies=True, format_selec
 # MAIN DOWNLOAD + MERGE FUNCTION
 # =========================================================
 
-def _format_summary(info):
-    """Return a compact, API-safe summary of extracted formats."""
+def _print_format_debug(info):
+    print('')
+    print('===== FORMAT DEBUG =====')
+
     formats = info.get('formats') or []
-    video = []
-    audio = []
-    muxed = []
 
     for f in formats:
-        vcodec = f.get('vcodec')
-        acodec = f.get('acodec')
-        item = {
-            'id': f.get('format_id'),
-            'ext': f.get('ext'),
-            'resolution': f.get('resolution'),
-            'vcodec': vcodec,
-            'acodec': acodec,
-            'protocol': f.get('protocol'),
-            'abr': f.get('abr'),
-            'tbr': f.get('tbr'),
-            'format_note': f.get('format_note'),
-        }
-        has_v = bool(vcodec and vcodec != 'none')
-        has_a = bool(acodec and acodec != 'none')
-        if has_v and has_a:
-            muxed.append(item)
-        elif has_v:
-            video.append(item)
-        elif has_a:
-            audio.append(item)
-
-    return {
-        'total': len(formats),
-        'video_only': len(video),
-        'audio_only': len(audio),
-        'muxed': len(muxed),
-        'video_examples': video[-5:],
-        'audio_examples': audio[-5:],
-        'muxed_examples': muxed[-5:],
-    }
-
-
-def _log_format_debug(info, log_capture, attempt_label):
-    summary = _format_summary(info)
-    log_capture.debug(
-        'Instagram formats [{}]: total={} video_only={} audio_only={} muxed={}'.format(
-            attempt_label,
-            summary['total'],
-            summary['video_only'],
-            summary['audio_only'],
-            summary['muxed']
-        )
-    )
-    for key in ('muxed_examples', 'audio_examples', 'video_examples'):
-        for item in summary[key]:
-            log_capture.debug(
-                'FORMAT [{}]: id={} ext={} res={} vcodec={} acodec={} protocol={} abr={} tbr={} note={}'.format(
-                    attempt_label,
-                    item.get('id'), item.get('ext'), item.get('resolution'),
-                    item.get('vcodec'), item.get('acodec'), item.get('protocol'),
-                    item.get('abr'), item.get('tbr'), item.get('format_note')
-                )
+        print(
+            'FORMAT: {} | EXT: {} | RES: {} | VCODEC: {} | ACODEC: {} | PROTO: {} | TBR: {}'.format(
+                f.get('format_id'),
+                f.get('ext'),
+                f.get('resolution'),
+                f.get('vcodec'),
+                f.get('acodec'),
+                f.get('protocol'),
+                f.get('tbr')
             )
-    return summary
+        )
+
+    print('===== END FORMAT DEBUG =====')
+    print('')
+
+    video_formats = [
+        f for f in formats
+        if f.get('vcodec') and f.get('vcodec') != 'none'
+    ]
+
+    audio_formats = [
+        f for f in formats
+        if f.get('acodec') and f.get('acodec') != 'none'
+        and (not f.get('vcodec') or f.get('vcodec') == 'none')
+    ]
+
+    muxed_formats = [
+        f for f in formats
+        if f.get('vcodec') and f.get('vcodec') != 'none'
+        and f.get('acodec') and f.get('acodec') != 'none'
+    ]
+
+    print('VIDEO FORMATS:', len(video_formats))
+    print('AUDIO-ONLY FORMATS:', len(audio_formats))
+    print('MUXED VIDEO+AUDIO FORMATS:', len(muxed_formats))
+
+    if audio_formats:
+        best_audio = max(
+            audio_formats,
+            key=lambda x: (x.get('abr') or 0, x.get('tbr') or 0)
+        )
+        print(
+            'BEST AUDIO:',
+            best_audio.get('format_id'),
+            '| ACODEC:',
+            best_audio.get('acodec'),
+            '| ABR:',
+            best_audio.get('abr')
+        )
+    elif muxed_formats:
+        best_muxed = max(
+            muxed_formats,
+            key=lambda x: (x.get('height') or 0, x.get('tbr') or 0)
+        )
+        print(
+            'BEST MUXED:',
+            best_muxed.get('format_id'),
+            '| ACODEC:',
+            best_muxed.get('acodec')
+        )
+    else:
+        print('WARNING: NO AUDIO FORMAT FOUND')
+
+    return bool(audio_formats or muxed_formats)
 
 
-def _clear_temp_files(temp_dir):
-    for path in glob.glob(os.path.join(temp_dir, '*')):
-        try:
-            if os.path.isfile(path):
-                os.remove(path)
-        except Exception:
-            pass
-
-
-def _download_once(url, temp_dir, log_capture, use_cookies=True, format_selector=None, attempt_label='unknown'):
+def _download_once(url, temp_dir, log_capture, use_cookies=True, format_selector=None):
     ydl_opts = build_ydl_options(
         temp_dir,
         log_capture,
@@ -250,29 +247,27 @@ def _download_once(url, temp_dir, log_capture, use_cookies=True, format_selector
         format_selector=format_selector
     )
 
-    log_capture.debug(
-        'Instagram attempt: cookies={} format={} yt-dlp={}'.format(
-            use_cookies,
-            format_selector or 'default',
-            getattr(yt_dlp.version, '__version__', 'unknown')
-        )
-    )
-
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
-        summary = _log_format_debug(info, log_capture, attempt_label)
 
-        if not summary['audio_only'] and not summary['muxed']:
-            log_capture.warning(
-                'No audio-bearing format exposed by Instagram in this attempt.'
-            )
+        if is_instagram(url):
+            _print_format_debug(info)
 
-        processed = ydl.process_ie_result(
+        info = ydl.process_ie_result(
             info,
             download=True
         )
 
-        return processed, info, summary
+        return info, info
+
+
+def _clear_temp_files(temp_dir):
+    for f in glob.glob(os.path.join(temp_dir, '*')):
+        try:
+            if os.path.isfile(f):
+                os.remove(f)
+        except Exception:
+            pass
 
 
 def download_and_merge(url, temp_dir):
@@ -281,65 +276,118 @@ def download_and_merge(url, temp_dir):
 
     try:
         if is_instagram(url):
-            # Try muxed audio+video first. If Instagram exposes a separate
-            # audio stream, fall back to normal video+audio selection.
+            # Instagram can expose a Reel as a muxed file in one response
+            # and as separate streams in another. Try every useful selector
+            # before declaring the Reel video-only.
             attempts = [
-                (True, 'best[vcodec!=none][acodec!=none]/bv*+ba/b', 'cookies-muxed'),
-                (True, 'bv*+ba/b', 'cookies-separate'),
-                (False, 'best[vcodec!=none][acodec!=none]/bv*+ba/b', 'public-muxed'),
-                (False, 'bv*+ba/b', 'public-separate'),
+                (True, 'best'),
+                (True, 'bv*+ba/b'),
+                (False, 'best'),
+                (False, 'bv*+ba/b'),
             ]
 
-            last_summary = None
-            for use_cookies, selector, label in attempts:
+            info = None
+
+            for use_cookies, selector in attempts:
                 _clear_temp_files(temp_dir)
+                log_capture.lines.append(
+                    'Instagram attempt: cookies={} format={}'.format(
+                        use_cookies, selector
+                    )
+                )
+
                 try:
-                    processed, extracted, summary = _download_once(
+                    info, extracted = _download_once(
                         url,
                         temp_dir,
                         log_capture,
                         use_cookies=use_cookies,
-                        format_selector=selector,
-                        attempt_label=label
+                        format_selector=selector
                     )
-                    last_summary = summary
-
-                    # If the resulting file contains an audio-bearing format,
-                    # this is the successful path. We still allow a downloaded
-                    # muxed file even when format metadata is unusual.
-                    if processed is not None:
-                        
-                        result = _finish_download(processed, temp_dir, log_capture, require_audio=True)
-                        if result[0] is not None:
-                            return result
-                        log_capture.warning('Downloaded file did not contain an audio stream; trying next Instagram selector.')
-
+                    if info is not None:
+                        break
                 except Exception as attempt_error:
-                    log_capture.error(
-                        'Instagram attempt failed [{}]: {}'.format(
-                            label, attempt_error
-                        )
+                    log_capture.lines.append(
+                        'Instagram attempt failed: ' + str(attempt_error)
                     )
+                    info = None
 
-            return None, None, {
-                'error': (
-                    'Instagram did not expose a usable audio stream for this Reel. '
-                    'The diagnostic below shows the formats Instagram returned to yt-dlp.'
-                ),
-                'format_summary': last_summary,
-                'logs': log_capture.lines[-100:]
-            }
+            if info is None:
+                return None, None, {
+                    'error': (
+                        'Instagram could not provide a downloadable audio/video combination. '
+                        'This Reel may expose only video media to yt-dlp.'
+                    ),
+                    'logs': log_capture.lines[-80:]
+                }
 
-        ydl_opts = build_ydl_options(
-            temp_dir,
-            log_capture,
-            url
+        else:
+            ydl_opts = build_ydl_options(
+                temp_dir,
+                log_capture,
+                url
+            )
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(
+                    url,
+                    download=True
+                )
+
+        title = info.get(
+            'title',
+            'video'
         )
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        safe_title = ''.join(
+            c for c in title
+            if c.isalnum() or c in (' ', '_', '-')
+        ).strip()
 
-        return _finish_download(info, temp_dir, log_capture)
+        filename = (
+            safe_title[:80] or 'video'
+        ) + '.mp4'
+
+        mp4_files = glob.glob(
+            os.path.join(temp_dir, '*.mp4')
+        )
+
+        if mp4_files:
+            output_file = max(
+                mp4_files,
+                key=os.path.getsize
+            )
+        else:
+            media_files = [
+                f for f in glob.glob(os.path.join(temp_dir, '*'))
+                if os.path.isfile(f)
+            ]
+
+            if not media_files:
+                return None, None, {
+                    'error': 'No downloaded file found.',
+                    'ffmpeg': imageio_ffmpeg.get_ffmpeg_exe(),
+                    'logs': log_capture.lines[-80:]
+                }
+
+            output_file = max(
+                media_files,
+                key=os.path.getsize
+            )
+
+        if not os.path.exists(output_file):
+            return None, None, {
+                'error': 'Output file does not exist.',
+                'logs': log_capture.lines[-80:]
+            }
+
+        if os.path.getsize(output_file) == 0:
+            return None, None, {
+                'error': 'Output file is empty.',
+                'logs': log_capture.lines[-80:]
+            }
+
+        return output_file, filename, None
 
     except Exception as e:
         return None, None, {
@@ -347,73 +395,15 @@ def download_and_merge(url, temp_dir):
             'deno_found': shutil.which('deno') is not None,
             'deno_dir_exists': os.path.isdir(_deno_bin),
             'ffmpeg_path': imageio_ffmpeg.get_ffmpeg_exe(),
-            'logs': log_capture.lines[-100:]
+            'logs': log_capture.lines[-80:]
         }
 
 
-def _has_audio_stream(path):
-    """Check the actual downloaded container, not just yt-dlp metadata."""
-    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-    try:
-        proc = subprocess.run(
-            [ffmpeg, '-hide_banner', '-i', path, '-map', '0:a:0', '-f', 'null', '-'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=30
-        )
-        text = (proc.stdout or '') + '\n' + (proc.stderr or '')
-        return 'Audio:' in text
-    except Exception:
-        return False
+# =========================================================
+# HOME API
+# =========================================================
 
-
-def _finish_download(info, temp_dir, log_capture, require_audio=False):
-    title = info.get('title', 'video') if isinstance(info, dict) else 'video'
-
-    safe_title = ''.join(
-        c for c in title
-        if c.isalnum() or c in (' ', '_', '-')
-    ).strip()
-
-    filename = (safe_title[:80] or 'video') + '.mp4'
-
-    mp4_files = glob.glob(os.path.join(temp_dir, '*.mp4'))
-    if mp4_files:
-        output_file = max(mp4_files, key=os.path.getsize)
-    else:
-        media_files = [
-            f for f in glob.glob(os.path.join(temp_dir, '*'))
-            if os.path.isfile(f)
-        ]
-        if not media_files:
-            return None, None, {
-                'error': 'No downloaded file found.',
-                'ffmpeg': imageio_ffmpeg.get_ffmpeg_exe(),
-                'logs': log_capture.lines[-100:]
-            }
-        output_file = max(media_files, key=os.path.getsize)
-
-    if not os.path.exists(output_file):
-        return None, None, {
-            'error': 'Output file does not exist.',
-            'logs': log_capture.lines[-100:]
-        }
-
-    if os.path.getsize(output_file) == 0:
-        return None, None, {
-            'error': 'Output file is empty.',
-            'logs': log_capture.lines[-100:]
-        }
-
-    if require_audio and not _has_audio_stream(output_file):
-        return None, None, {
-            'error': 'Downloaded file contains no audio stream.',
-            'logs': log_capture.lines[-100:]
-        }
-
-    return output_file, filename, None
-
+@app.route('/', methods=['POST'])
 def download():
 
     try:
@@ -491,31 +481,31 @@ def download():
 # STREAM / DOWNLOAD ENDPOINT
 # =========================================================
 
-@app.route("/", methods=["POST", "OPTIONS"])
-def download():
-    if request.method == "OPTIONS":
-        return "", 204
+@app.route('/stream', methods=['GET'])
+def stream():
 
-    data = request.get_json(silent=True) or {}
-    url = (data.get("url") or "").strip()
-
-    if not url:
-        return jsonify({
-            "status": "error",
-            "error": {
-                "code": "URL is required."
-            }
-        }), 400
-
-    proxy_url = request.host_url.rstrip("/") + "/stream?url=" + quote(
-        url, safe=""
+    original_url = request.args.get(
+        'url'
     )
 
-    return jsonify({
-        "status": "success",
-        "url": proxy_url
-    })
-    
+
+    if not original_url:
+
+        return jsonify({
+
+            'status': 'error',
+
+            'error': {
+                'code': 'URL missing'
+            }
+
+        }), 400
+
+
+    # Create temporary directory
+    temp_dir = tempfile.mkdtemp(
+        prefix='vdownloader_'
+    )
 
 
     try:
