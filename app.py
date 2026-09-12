@@ -30,7 +30,10 @@ if os.path.isdir(_deno_bin):
 
 app = Flask(__name__)
 CORS(app)
-
+      resources={r"/*": {"origins": "*"}},
+    methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"]
+)
 
 # =========================================================
 # COOKIE SETTINGS
@@ -488,25 +491,30 @@ def download():
 # STREAM / DOWNLOAD ENDPOINT
 # =========================================================
 
-@app.route('/stream', methods=['GET'])
-def stream():
+@app.route("/", methods=["POST", "OPTIONS"])
+def download():
+    if request.method == "OPTIONS":
+        return "", 204
 
-    original_url = request.args.get(
-        'url'
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+
+    if not url:
+        return jsonify({
+            "status": "error",
+            "error": {
+                "code": "URL is required."
+            }
+        }), 400
+
+    proxy_url = request.host_url.rstrip("/") + "/stream?url=" + quote(
+        url, safe=""
     )
 
-
-    if not original_url:
-
-        return jsonify({
-
-            'status': 'error',
-
-            'error': {
-                'code': 'URL missing'
-            }
-
-        }), 400
+    return jsonify({
+        "status": "success",
+        "url": proxy_url
+    })
 
 
     # Create temporary directory
