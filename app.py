@@ -10,7 +10,6 @@ import subprocess
 import re
 import html
 import json
-import time
 
 
 # =========================================================
@@ -34,7 +33,11 @@ CORS(
 DENO_PATH = "/opt/render/project/.deno/bin"
 
 if os.path.isdir(DENO_PATH):
-    os.environ["PATH"] = DENO_PATH + os.pathsep + os.environ.get("PATH", "")
+    os.environ["PATH"] = (
+        DENO_PATH
+        + os.pathsep
+        + os.environ.get("PATH", "")
+    )
 
 
 COOKIES_SOURCE = "/etc/secrets/cookies.txt"
@@ -42,14 +45,22 @@ COOKIES_TMP = "/tmp/cookies.txt"
 
 
 # =========================================================
-# COPY COOKIES
+# COOKIE PREPARATION
 # =========================================================
 
 def prepare_cookies():
+
     try:
+
         if os.path.exists(COOKIES_SOURCE):
-            shutil.copyfile(COOKIES_SOURCE, COOKIES_TMP)
+
+            shutil.copyfile(
+                COOKIES_SOURCE,
+                COOKIES_TMP
+            )
+
             return COOKIES_TMP
+
     except Exception:
         pass
 
@@ -57,10 +68,11 @@ def prepare_cookies():
 
 
 # =========================================================
-# HELPERS
+# URL HELPERS
 # =========================================================
 
 def is_youtube(url):
+
     u = (url or "").lower()
 
     return (
@@ -71,6 +83,7 @@ def is_youtube(url):
 
 
 def is_instagram(url):
+
     u = (url or "").lower()
 
     return (
@@ -80,6 +93,7 @@ def is_instagram(url):
 
 
 def is_facebook(url):
+
     u = (url or "").lower()
 
     return (
@@ -89,25 +103,12 @@ def is_facebook(url):
     )
 
 
-def safe_filename(value):
-    value = value or "video"
-
-    value = re.sub(
-        r'[\\/:*?"<>|]+',
-        "_",
-        value
-    )
-
-    value = re.sub(
-        r"\s+",
-        " ",
-        value
-    ).strip()
-
-    return value[:150] or "video"
-
+# =========================================================
+# FFMPEG
+# =========================================================
 
 def find_ffmpeg():
+
     candidates = [
         shutil.which("ffmpeg"),
         "/usr/bin/ffmpeg",
@@ -115,6 +116,7 @@ def find_ffmpeg():
     ]
 
     for path in candidates:
+
         if path and os.path.exists(path):
             return path
 
@@ -125,10 +127,11 @@ FFMPEG = find_ffmpeg()
 
 
 # =========================================================
-# LOG CAPTURE
+# LOGGER
 # =========================================================
 
 class LogCapture:
+
     def __init__(self):
         self.lines = []
 
@@ -136,10 +139,14 @@ class LogCapture:
         self.lines.append(str(msg))
 
     def warning(self, msg):
-        self.lines.append("WARNING: " + str(msg))
+        self.lines.append(
+            "WARNING: " + str(msg)
+        )
 
     def error(self, msg):
-        self.lines.append("ERROR: " + str(msg))
+        self.lines.append(
+            "ERROR: " + str(msg)
+        )
 
     def info(self, msg):
         self.lines.append(str(msg))
@@ -154,7 +161,7 @@ class LogCapture:
 
 def build_common_options(logger=None):
 
-    opts = {
+    return {
         "quiet": True,
         "no_warnings": False,
         "noplaylist": True,
@@ -166,8 +173,6 @@ def build_common_options(logger=None):
         "concurrent_fragment_downloads": 4,
         "logger": logger,
     }
-
-    return opts
 
 
 # =========================================================
@@ -203,17 +208,23 @@ def youtube_options(logger=None):
     opts = build_common_options(logger)
 
     opts.update({
+
         "format": "bv*+ba/b",
+
         "merge_output_format": "mp4",
+
         "http_headers": {
+
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 "
                 "(KHTML, like Gecko) "
                 "Chrome/151.0.0.0 Safari/537.36"
             ),
-            "Accept-Language": "en-US,en;q=0.9",
-        },
+
+            "Accept-Language":
+                "en-US,en;q=0.9",
+        }
     })
 
     cookies = prepare_cookies()
@@ -221,15 +232,18 @@ def youtube_options(logger=None):
     if cookies:
         opts["cookiefile"] = cookies
 
-    # YouTube POT provider
     opts["extractor_args"] = {
+
         "youtube": {
+
             "player_client": [
                 "web",
                 "web_safari",
                 "mweb",
             ]
+
         }
+
     }
 
     return opts
@@ -244,16 +258,22 @@ def facebook_options(logger=None):
     opts = build_common_options(logger)
 
     opts.update({
+
         "format": "bv*+ba/b",
+
         "merge_output_format": "mp4",
+
         "http_headers": {
+
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 "
                 "(KHTML, like Gecko) "
                 "Chrome/151.0.0.0 Safari/537.36"
-            ),
-        },
+            )
+
+        }
+
     })
 
     cookies = prepare_cookies()
@@ -277,12 +297,18 @@ def instagram_options(
     opts = build_common_options(logger)
 
     opts.update({
+
         "format": fmt,
+
         "merge_output_format": "mp4",
-        "http_headers": instagram_headers(),
+
+        "http_headers":
+            instagram_headers()
+
     })
 
     if use_cookies:
+
         cookies = prepare_cookies()
 
         if cookies:
@@ -312,47 +338,88 @@ def format_summary(info):
         acodec = f.get("acodec")
         vcodec = f.get("vcodec")
 
+        has_audio = (
+            acodec
+            and acodec != "none"
+        )
+
+        has_video = (
+            vcodec
+            and vcodec != "none"
+        )
+
         item = {
+
             "id": f.get("format_id"),
+
             "ext": f.get("ext"),
+
             "protocol": f.get("protocol"),
-            "resolution": f.get("resolution"),
-            "vcodec": acodec and f.get("vcodec"),
-            "acodec": acodec,
-            "abr": f.get("abr"),
-            "tbr": f.get("tbr"),
-            "format_note": f.get("format_note"),
+
+            "resolution":
+                f.get("resolution"),
+
+            "vcodec":
+                f.get("vcodec"),
+
+            "acodec":
+                f.get("acodec"),
+
+            "abr":
+                f.get("abr"),
+
+            "tbr":
+                f.get("tbr"),
+
+            "format_note":
+                f.get("format_note"),
+
         }
 
-        has_audio = acodec and acodec != "none"
-        has_video = vcodec and vcodec != "none"
-
         if has_audio and has_video:
+
             muxed += 1
 
             if len(muxed_examples) < 5:
                 muxed_examples.append(item)
 
         elif has_audio:
+
             audio_only += 1
 
             if len(audio_examples) < 5:
                 audio_examples.append(item)
 
         elif has_video:
+
             video_only += 1
 
             if len(video_examples) < 5:
                 video_examples.append(item)
 
     return {
-        "total": len(formats),
-        "audio_only": audio_only,
-        "video_only": video_only,
-        "muxed": muxed,
-        "audio_examples": audio_examples,
-        "video_examples": video_examples,
-        "muxed_examples": muxed_examples,
+
+        "total":
+            len(formats),
+
+        "audio_only":
+            audio_only,
+
+        "video_only":
+            video_only,
+
+        "muxed":
+            muxed,
+
+        "audio_examples":
+            audio_examples,
+
+        "video_examples":
+            video_examples,
+
+        "muxed_examples":
+            muxed_examples,
+
     }
 
 
@@ -362,7 +429,10 @@ def format_summary(info):
 
 def has_audio_stream(path):
 
-    if not path or not os.path.exists(path):
+    if not path:
+        return False
+
+    if not os.path.exists(path):
         return False
 
     if not FFMPEG:
@@ -371,6 +441,7 @@ def has_audio_stream(path):
     try:
 
         result = subprocess.run(
+
             [
                 FFMPEG,
                 "-hide_banner",
@@ -382,16 +453,21 @@ def has_audio_stream(path):
                 "null",
                 "-"
             ],
+
             stdout=subprocess.PIPE,
+
             stderr=subprocess.PIPE,
+
             text=True,
+
             timeout=30
+
         )
 
         output = (
-            (result.stdout or "") +
-            "\n" +
-            (result.stderr or "")
+            (result.stdout or "")
+            + "\n"
+            + (result.stderr or "")
         )
 
         return (
@@ -400,6 +476,7 @@ def has_audio_stream(path):
         )
 
     except Exception:
+
         return False
 
 
@@ -416,7 +493,10 @@ def find_downloaded_file(directory):
 
     for name in os.listdir(directory):
 
-        path = os.path.join(directory, name)
+        path = os.path.join(
+            directory,
+            name
+        )
 
         if os.path.isfile(path):
             files.append(path)
@@ -425,7 +505,8 @@ def find_downloaded_file(directory):
         return None
 
     files.sort(
-        key=lambda p: os.path.getmtime(p),
+        key=lambda p:
+            os.path.getmtime(p),
         reverse=True
     )
 
@@ -433,7 +514,7 @@ def find_downloaded_file(directory):
 
 
 # =========================================================
-# NORMAL YT-DLP DOWNLOAD
+# YT-DLP DOWNLOAD
 # =========================================================
 
 def download_with_ytdlp(
@@ -459,35 +540,420 @@ def download_with_ytdlp(
                 download=True
             )
 
-            downloaded = find_downloaded_file(workdir)
+        downloaded = find_downloaded_file(
+            workdir
+        )
 
-            return {
-                "success": bool(downloaded),
-                "path": downloaded,
-                "info": info,
-            }
+        return {
+
+            "success":
+                bool(downloaded),
+
+            "path":
+                downloaded,
+
+            "info":
+                info
+
+        }
 
     except Exception as e:
 
         logger.error(
-            "yt-dlp download failed: " + str(e)
+            "yt-dlp download failed: "
+            + str(e)
         )
 
         return {
+
             "success": False,
+
             "path": None,
+
             "info": None,
-            "error": str(e),
+
+            "error": str(e)
+
         }
 
 
 # =========================================================
-# INSTAGRAM PAGE FALLBACK
-#
-# This does NOT try to magically create missing audio.
-# It checks whether Instagram's page itself exposes a
-# directly usable media URL that yt-dlp's format list
-# did not expose.
+# INSTAGRAM COOKIE IMPORT
+# =========================================================
+
+def import_instagram_cookies(session):
+
+    cookies = prepare_cookies()
+
+    if not cookies:
+        return
+
+    try:
+
+        with open(
+            cookies,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            cookie_text = f.read()
+
+        for line in cookie_text.splitlines():
+
+            if (
+                not line
+                or line.startswith("#")
+                or len(
+                    line.split("\t")
+                ) < 7
+            ):
+                continue
+
+            parts = line.split("\t")
+
+            domain = parts[0]
+            name = parts[5]
+            value = parts[6]
+
+            session.cookies.set(
+                name,
+                value,
+                domain=domain
+            )
+
+    except Exception:
+        pass
+
+
+# =========================================================
+# INSTAGRAM PAGE DIAGNOSTIC
+# =========================================================
+
+def inspect_instagram_page(
+    url,
+    logger=None
+):
+
+    session = requests.Session()
+
+    session.headers.update(
+        instagram_headers()
+    )
+
+    import_instagram_cookies(
+        session
+    )
+
+    result = {
+
+        "http_status": None,
+
+        "content_length": 0,
+
+        "video_url_count": 0,
+
+        "audio_url_count": 0,
+
+        "audio_versions_count": 0,
+
+        "music_metadata_count": 0,
+
+        "original_sound_info_count": 0,
+
+        "clips_metadata_count": 0,
+
+        "keyword_hits": {}
+
+    }
+
+    try:
+
+        response = session.get(
+            url,
+            timeout=30,
+            allow_redirects=True
+        )
+
+        page = response.text
+
+        result["http_status"] = (
+            response.status_code
+        )
+
+        result["content_length"] = (
+            len(page)
+        )
+
+        lower_page = page.lower()
+
+        keywords = [
+
+            "audio_url",
+
+            "audio_versions",
+
+            "music_metadata",
+
+            "original_sound_info",
+
+            "clips_metadata",
+
+            "music_canonical_id",
+
+            "audio"
+
+        ]
+
+        for keyword in keywords:
+
+            count = lower_page.count(
+                keyword.lower()
+            )
+
+            result[
+                "keyword_hits"
+            ][keyword] = count
+
+        video_urls = re.findall(
+
+            r'"video_url"\s*:\s*"([^"]+)"',
+
+            page,
+
+            flags=re.I
+
+        )
+
+        audio_urls = re.findall(
+
+            r'"audio_url"\s*:\s*"([^"]+)"',
+
+            page,
+
+            flags=re.I
+
+        )
+
+        audio_versions = re.findall(
+
+            r'"audio_versions"\s*:\s*\[',
+
+            page,
+
+            flags=re.I
+
+        )
+
+        music_metadata = re.findall(
+
+            r'"music_metadata"\s*:',
+
+            page,
+
+            flags=re.I
+
+        )
+
+        original_sound = re.findall(
+
+            r'"original_sound_info"\s*:',
+
+            page,
+
+            flags=re.I
+
+        )
+
+        clips_metadata = re.findall(
+
+            r'"clips_metadata"\s*:',
+
+            page,
+
+            flags=re.I
+
+        )
+
+        result["video_url_count"] = (
+            len(video_urls)
+        )
+
+        result["audio_url_count"] = (
+            len(audio_urls)
+        )
+
+        result["audio_versions_count"] = (
+            len(audio_versions)
+        )
+
+        result["music_metadata_count"] = (
+            len(music_metadata)
+        )
+
+        result[
+            "original_sound_info_count"
+        ] = len(original_sound)
+
+        result[
+            "clips_metadata_count"
+        ] = len(clips_metadata)
+
+        return result
+
+    except Exception as e:
+
+        result["error"] = str(e)
+
+        if logger:
+            logger.warning(
+                "Instagram page check failed: "
+                + str(e)
+            )
+
+        return result
+
+
+# =========================================================
+# INSTAGRAM EMBED DIAGNOSTIC
+# =========================================================
+
+def inspect_instagram_embed(
+    url,
+    logger=None
+):
+
+    clean_url = url.split("?")[0].rstrip("/")
+
+    embed_url = (
+        clean_url
+        + "/embed/"
+    )
+
+    result = {
+
+        "url": embed_url,
+
+        "http_status": None,
+
+        "content_length": 0,
+
+        "video_url_count": 0,
+
+        "audio_url_count": 0,
+
+        "audio_versions_count": 0,
+
+        "keyword_hits": {}
+
+    }
+
+    try:
+
+        response = requests.get(
+
+            embed_url,
+
+            headers=instagram_headers(),
+
+            timeout=30,
+
+            allow_redirects=True
+
+        )
+
+        page = response.text
+
+        result["http_status"] = (
+            response.status_code
+        )
+
+        result["content_length"] = (
+            len(page)
+        )
+
+        lower_page = page.lower()
+
+        keywords = [
+
+            "audio_url",
+
+            "audio_versions",
+
+            "music_metadata",
+
+            "original_sound_info",
+
+            "clips_metadata"
+
+        ]
+
+        for keyword in keywords:
+
+            result[
+                "keyword_hits"
+            ][keyword] = lower_page.count(
+                keyword.lower()
+            )
+
+        video_urls = re.findall(
+
+            r'"video_url"\s*:\s*"([^"]+)"',
+
+            page,
+
+            flags=re.I
+
+        )
+
+        audio_urls = re.findall(
+
+            r'"audio_url"\s*:\s*"([^"]+)"',
+
+            page,
+
+            flags=re.I
+
+        )
+
+        audio_versions = re.findall(
+
+            r'"audio_versions"\s*:\s*\[',
+
+            page,
+
+            flags=re.I
+
+        )
+
+        result["video_url_count"] = (
+            len(video_urls)
+        )
+
+        result["audio_url_count"] = (
+            len(audio_urls)
+        )
+
+        result["audio_versions_count"] = (
+            len(audio_versions)
+        )
+
+        return result
+
+    except Exception as e:
+
+        result["error"] = str(e)
+
+        if logger:
+            logger.warning(
+                "Instagram embed check failed: "
+                + str(e)
+            )
+
+        return result
+
+
+# =========================================================
+# INSTAGRAM PAGE MEDIA FALLBACK
 # =========================================================
 
 def instagram_page_fallback(
@@ -502,41 +968,9 @@ def instagram_page_fallback(
         instagram_headers()
     )
 
-    cookies = prepare_cookies()
-
-    if cookies:
-        try:
-            with open(cookies, "r", encoding="utf-8") as f:
-                cookie_text = f.read()
-
-            # Basic Netscape cookie import
-            for line in cookie_text.splitlines():
-
-                if (
-                    not line
-                    or line.startswith("#")
-                    or len(line.split("\t")) < 7
-                ):
-                    continue
-
-                parts = line.split("\t")
-
-                domain = parts[0]
-                name = parts[5]
-                value = parts[6]
-
-                session.cookies.set(
-                    name,
-                    value,
-                    domain=domain
-                )
-
-        except Exception as e:
-
-            logger.warning(
-                "Could not import Instagram cookies: "
-                + str(e)
-            )
+    import_instagram_cookies(
+        session
+    )
 
     try:
 
@@ -557,20 +991,23 @@ def instagram_page_fallback(
 
         page = response.text
 
-        # -------------------------------------------------
-        # 1. og:video
-        # -------------------------------------------------
-
-        og_patterns = [
-            r'<meta[^>]+property=["\']og:video["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:video["\']',
-            r'<meta[^>]+property=["\']og:video:secure_url["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:video:secure_url["\']',
-        ]
-
         media_urls = []
 
-        for pattern in og_patterns:
+        patterns = [
+
+            r'<meta[^>]+property=["\']og:video["\'][^>]+content=["\']([^"\']+)["\']',
+
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:video["\']',
+
+            r'<meta[^>]+property=["\']og:video:secure_url["\'][^>]+content=["\']([^"\']+)["\']',
+
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:video:secure_url["\']',
+
+            r'"video_url"\s*:\s*"([^"]+)"',
+
+        ]
+
+        for pattern in patterns:
 
             matches = re.findall(
                 pattern,
@@ -578,36 +1015,11 @@ def instagram_page_fallback(
                 flags=re.I
             )
 
-            for match in matches:
+            for value in matches:
 
-                value = html.unescape(match)
-
-                if value not in media_urls:
-                    media_urls.append(value)
-
-        # -------------------------------------------------
-        # 2. Search escaped media URLs
-        # -------------------------------------------------
-
-        escaped_patterns = [
-            r'"video_url"\s*:\s*"([^"]+)"',
-            r'"video_versions"\s*:\s*\[(.*?)\]',
-        ]
-
-        for pattern in escaped_patterns:
-
-            matches = re.findall(
-                pattern,
-                page,
-                flags=re.I | re.S
-            )
-
-            for match in matches:
-
-                if isinstance(match, tuple):
-                    continue
-
-                value = match
+                value = html.unescape(
+                    value
+                )
 
                 value = value.replace(
                     "\\/",
@@ -619,28 +1031,23 @@ def instagram_page_fallback(
                     "&"
                 )
 
-                value = html.unescape(value)
+                if (
+                    value.startswith("http")
+                    and value not in media_urls
+                ):
 
-                if value.startswith("http"):
-
-                    if (
-                        ".mp4" in value
-                        or "video" in value.lower()
-                    ):
-                        if value not in media_urls:
-                            media_urls.append(value)
+                    media_urls.append(
+                        value
+                    )
 
         if not media_urls:
 
             logger.warning(
-                "Instagram page fallback found no direct media URL"
+                "Instagram page fallback found "
+                "no direct media URL"
             )
 
             return None
-
-        # -------------------------------------------------
-        # Download candidate media
-        # -------------------------------------------------
 
         for index, media_url in enumerate(
             media_urls[:10]
@@ -649,22 +1056,30 @@ def instagram_page_fallback(
             try:
 
                 logger.info(
-                    "Instagram page fallback candidate "
+                    "Instagram fallback candidate "
                     + str(index + 1)
                 )
 
                 filename = os.path.join(
+
                     workdir,
+
                     "instagram_fallback_"
                     + str(index)
                     + ".mp4"
+
                 )
 
                 r = session.get(
+
                     media_url,
+
                     stream=True,
+
                     timeout=45,
+
                     allow_redirects=True
+
                 )
 
                 content_type = (
@@ -697,29 +1112,28 @@ def instagram_page_fallback(
 
                 if (
                     os.path.exists(filename)
-                    and os.path.getsize(filename) > 10000
+                    and os.path.getsize(filename)
+                    > 10000
                 ):
 
-                    # IMPORTANT:
-                    # Accept only if actual file has audio.
-                    if has_audio_stream(filename):
+                    if has_audio_stream(
+                        filename
+                    ):
 
                         logger.info(
-                            "Instagram fallback found "
-                            "a media file WITH audio"
+                            "Fallback media contains audio"
                         )
 
                         return filename
 
                     logger.info(
-                        "Instagram fallback media "
-                        "has no audio"
+                        "Fallback media has no audio"
                     )
 
             except Exception as e:
 
                 logger.warning(
-                    "Instagram fallback candidate failed: "
+                    "Fallback candidate failed: "
                     + str(e)
                 )
 
@@ -739,64 +1153,80 @@ def instagram_page_fallback(
 # INSTAGRAM DOWNLOAD
 # =========================================================
 
-def download_instagram(url, workdir, logger):
+def download_instagram(
+    url,
+    workdir,
+    logger
+):
 
     attempts = [
 
-        # 1. Cookies + normal muxed/audio
         (
             True,
             "bv*+ba/b",
             "cookies-normal"
         ),
 
-        # 2. Cookies + explicitly prefer muxed
         (
             True,
             "best[vcodec!=none][acodec!=none]/bv*+ba/b",
             "cookies-muxed"
         ),
 
-        # 3. Public normal
         (
             False,
             "bv*+ba/b",
             "public-normal"
         ),
 
-        # 4. Public muxed
         (
             False,
             "best[vcodec!=none][acodec!=none]/bv*+ba/b",
             "public-muxed"
         ),
+
     ]
 
     last_summary = None
 
-    for use_cookies, fmt, label in attempts:
+    for (
+        use_cookies,
+        fmt,
+        label
+    ) in attempts:
 
         logger.info(
-            "Instagram attempt: " + label
+            "Instagram attempt: "
+            + label
         )
 
         try:
 
             opts = instagram_options(
+
                 logger=logger,
+
                 use_cookies=use_cookies,
+
                 fmt=fmt
+
             )
 
-            # First extract without downloading.
-            with yt_dlp.YoutubeDL(opts) as ydl:
+            with yt_dlp.YoutubeDL(
+                opts
+            ) as ydl:
 
                 info = ydl.extract_info(
+
                     url,
+
                     download=False
+
                 )
 
-            summary = format_summary(info)
+            summary = format_summary(
+                info
+            )
 
             last_summary = summary
 
@@ -808,47 +1238,56 @@ def download_instagram(url, workdir, logger):
                 )
             )
 
-            # If Instagram actually exposed audio,
-            # download normally.
             if (
                 summary["muxed"] > 0
                 or summary["audio_only"] > 0
             ):
 
                 result = download_with_ytdlp(
+
                     url,
+
                     workdir,
+
                     opts,
+
                     logger
+
                 )
 
                 if result["success"]:
 
                     path = result["path"]
 
-                    if has_audio_stream(path):
+                    if has_audio_stream(
+                        path
+                    ):
 
                         logger.info(
-                            "Instagram normal download "
-                            "has audio"
+                            "Instagram download "
+                            "contains audio"
                         )
 
                         return {
+
                             "success": True,
+
                             "path": path,
-                            "summary": summary,
+
+                            "summary": summary
+
                         }
 
                     logger.warning(
-                        "Downloaded Instagram file "
-                        "still has no audio"
+                        "Instagram output "
+                        "has no audio"
                     )
 
             else:
 
                 logger.warning(
-                    "Instagram exposed no usable audio "
-                    "in this attempt"
+                    "Instagram exposed no usable "
+                    "audio in this attempt"
                 )
 
         except Exception as e:
@@ -861,42 +1300,48 @@ def download_instagram(url, workdir, logger):
             )
 
     # =====================================================
-    # PAGE LEVEL FALLBACK
+    # PAGE FALLBACK
     # =====================================================
 
     logger.info(
-        "Starting Instagram page-level audio fallback"
+        "Starting Instagram page-level fallback"
     )
 
-    fallback_path = instagram_page_fallback(
-        url,
-        workdir,
-        logger
+    fallback_path = (
+        instagram_page_fallback(
+            url,
+            workdir,
+            logger
+        )
     )
 
     if fallback_path:
 
         return {
+
             "success": True,
+
             "path": fallback_path,
+
             "summary": last_summary,
+
             "fallback": "page-media"
+
         }
 
-    # =====================================================
-    # FINAL ERROR
-    # =====================================================
-
     return {
+
         "success": False,
+
         "path": None,
+
         "summary": last_summary,
+
         "error": (
-            "Instagram did not expose a usable audio "
-            "stream for this Reel. The available "
-            "Instagram formats contained video but "
-            "no audio stream."
+            "Instagram did not expose a usable "
+            "audio stream for this Reel."
         )
+
     }
 
 
@@ -904,18 +1349,32 @@ def download_instagram(url, workdir, logger):
 # GENERAL DOWNLOAD
 # =========================================================
 
-def download_video(url, workdir, logger):
+def download_video(
+    url,
+    workdir,
+    logger
+):
 
-    # Instagram gets special handling.
+    # -----------------------------------------------------
+    # Instagram
+    # -----------------------------------------------------
+
     if is_instagram(url):
 
         return download_instagram(
+
             url,
+
             workdir,
+
             logger
+
         )
 
+    # -----------------------------------------------------
     # YouTube
+    # -----------------------------------------------------
+
     if is_youtube(url):
 
         logger.info(
@@ -926,16 +1385,22 @@ def download_video(url, workdir, logger):
             logger
         )
 
-        result = download_with_ytdlp(
+        return download_with_ytdlp(
+
             url,
+
             workdir,
+
             opts,
+
             logger
+
         )
 
-        return result
-
+    # -----------------------------------------------------
     # Facebook
+    # -----------------------------------------------------
+
     if is_facebook(url):
 
         logger.info(
@@ -946,16 +1411,22 @@ def download_video(url, workdir, logger):
             logger
         )
 
-        result = download_with_ytdlp(
+        return download_with_ytdlp(
+
             url,
+
             workdir,
+
             opts,
+
             logger
+
         )
 
-        return result
+    # -----------------------------------------------------
+    # Generic
+    # -----------------------------------------------------
 
-    # Other supported URLs
     logger.info(
         "Using generic downloader"
     )
@@ -965,8 +1436,11 @@ def download_video(url, workdir, logger):
     )
 
     opts.update({
+
         "format": "bv*+ba/b",
-        "merge_output_format": "mp4",
+
+        "merge_output_format": "mp4"
+
     })
 
     cookies = prepare_cookies()
@@ -975,10 +1449,15 @@ def download_video(url, workdir, logger):
         opts["cookiefile"] = cookies
 
     return download_with_ytdlp(
+
         url,
+
         workdir,
+
         opts,
+
         logger
+
     )
 
 
@@ -993,6 +1472,7 @@ def download_video(url, workdir, logger):
 def download():
 
     if request.method == "OPTIONS":
+
         return "", 204
 
     try:
@@ -1002,18 +1482,25 @@ def download():
         ) or {}
 
         url = (
+
             data.get("url")
+
             or data.get("video_url")
+
             or ""
+
         ).strip()
 
         if not url:
 
             return jsonify({
+
                 "status": "error",
+
                 "error": {
                     "code": "URL_REQUIRED"
                 }
+
             }), 400
 
         if not (
@@ -1022,41 +1509,57 @@ def download():
         ):
 
             return jsonify({
+
                 "status": "error",
+
                 "error": {
                     "code": "INVALID_URL"
                 }
+
             }), 400
 
-        # Keep a server-side request id.
         request_id = uuid.uuid4().hex
 
+        stream_url = (
+
+            request.host_url.rstrip("/")
+
+            + "/stream?url="
+
+            + requests.utils.quote(
+                url,
+                safe=""
+            )
+
+            + "&id="
+
+            + request_id
+
+        )
+
         return jsonify({
+
             "status": "success",
-            "url": (
-                request.host_url.rstrip("/")
-                + "/stream?url="
-                + requests.utils.quote(
-                    url,
-                    safe=""
-                )
-                + "&id="
-                + request_id
-            ),
+
+            "url": stream_url
+
         })
 
     except Exception as e:
 
         return jsonify({
+
             "status": "error",
+
             "error": {
                 "code": str(e)
             }
+
         }), 500
 
 
 # =========================================================
-# STREAM / ACTUAL DOWNLOAD
+# STREAM
 # =========================================================
 
 @app.route(
@@ -1073,10 +1576,13 @@ def stream():
     if not url:
 
         return jsonify({
+
             "status": "error",
+
             "error": {
                 "code": "URL_REQUIRED"
             }
+
         }), 400
 
     logger = LogCapture()
@@ -1088,33 +1594,48 @@ def stream():
     try:
 
         logger.info(
-            "Starting download for: " + url
+            "Starting download for: "
+            + url
         )
 
         result = download_video(
+
             url,
+
             workdir,
+
             logger
+
         )
 
         if not result.get("success"):
 
-            debug_data = {
-                "logs": logger.get(),
-                "format_summary": result.get(
-                    "summary"
-                ),
-            }
-
             return jsonify({
+
                 "status": "error",
+
                 "error": {
-                    "code": result.get(
-                        "error",
-                        "Download failed"
-                    )
+
+                    "code":
+                        result.get(
+                            "error",
+                            "Download failed"
+                        )
+
                 },
-                "debug": debug_data
+
+                "debug": {
+
+                    "logs":
+                        logger.get(),
+
+                    "format_summary":
+                        result.get(
+                            "summary"
+                        )
+
+                }
+
             }), 500
 
         path = result.get("path")
@@ -1122,17 +1643,27 @@ def stream():
         if not path or not os.path.exists(path):
 
             return jsonify({
+
                 "status": "error",
+
                 "error": {
-                    "code": "OUTPUT_FILE_NOT_FOUND"
+
+                    "code":
+                        "OUTPUT_FILE_NOT_FOUND"
+
                 },
+
                 "debug": {
-                    "logs": logger.get()
+
+                    "logs":
+                        logger.get()
+
                 }
+
             }), 500
 
         # -------------------------------------------------
-        # Final audio check
+        # FINAL AUDIO CHECK
         # -------------------------------------------------
 
         audio_present = has_audio_stream(
@@ -1144,48 +1675,40 @@ def stream():
             + str(audio_present)
         )
 
-        # -------------------------------------------------
-        # If Instagram still has no audio,
-        # do NOT return silent file.
-        # -------------------------------------------------
-
+        # Never return silent Instagram video
         if (
             is_instagram(url)
             and not audio_present
         ):
 
             return jsonify({
+
                 "status": "error",
+
                 "error": {
-                    "code": (
-                        "Instagram returned a video "
-                        "without an audio stream."
-                    )
+
+                    "code":
+                        "Instagram returned a "
+                        "video without audio."
+
                 },
+
                 "debug": {
-                    "logs": logger.get(),
-                    "format_summary": result.get(
-                        "summary"
-                    )
+
+                    "logs":
+                        logger.get(),
+
+                    "format_summary":
+                        result.get(
+                            "summary"
+                        )
+
                 }
+
             }), 422
 
         # -------------------------------------------------
-        # Determine filename
-        # -------------------------------------------------
-
-        ext = (
-            os.path.splitext(path)[1]
-            or ".mp4"
-        )
-
-        filename = (
-            "VDownloader"
-            + ext
-        )
-
-        # -------------------------------------------------
-        # Stream file
+        # STREAM
         # -------------------------------------------------
 
         def generate():
@@ -1211,53 +1734,410 @@ def stream():
             finally:
 
                 try:
+
                     shutil.rmtree(
                         workdir,
                         ignore_errors=True
                     )
+
                 except Exception:
                     pass
 
         return Response(
+
             stream_with_context(
                 generate()
             ),
+
             mimetype="video/mp4",
+
             headers={
-                "Content-Disposition": (
-                    'attachment; filename="'
-                    + filename
-                    + '"'
-                ),
-                "Content-Type": "video/mp4",
-                "Cache-Control": "no-store",
-                "X-VDownloader-Audio": (
+
+                "Content-Disposition":
+                    'attachment; filename="VDownloader.mp4"',
+
+                "Content-Type":
+                    "video/mp4",
+
+                "Cache-Control":
+                    "no-store",
+
+                "X-VDownloader-Audio":
                     "yes"
-                    if audio_present
-                    else "no"
-                ),
+
             }
+
         )
 
     except Exception as e:
 
         try:
+
             shutil.rmtree(
                 workdir,
                 ignore_errors=True
             )
+
         except Exception:
             pass
 
         return jsonify({
+
             "status": "error",
+
             "error": {
+
                 "code": str(e)
+
             },
+
             "debug": {
-                "logs": logger.get()
+
+                "logs":
+                    logger.get()
+
             }
+
         }), 500
+
+
+# =========================================================
+# INSTAGRAM DEBUG ENDPOINT
+# =========================================================
+
+@app.route(
+    "/instagram-debug",
+    methods=["GET"]
+)
+def instagram_debug():
+
+    url = request.args.get(
+        "url",
+        ""
+    ).strip()
+
+    if not url:
+
+        return jsonify({
+
+            "status": "error",
+
+            "error":
+                "url parameter is required"
+
+        }), 400
+
+    if not is_instagram(url):
+
+        return jsonify({
+
+            "status": "error",
+
+            "error":
+                "Please provide an Instagram URL"
+
+        }), 400
+
+    logger = LogCapture()
+
+    result = {
+
+        "status": "ok",
+
+        "url": url,
+
+        "yt_dlp": {},
+
+        "page": {},
+
+        "embed": {}
+
+    }
+
+    # =====================================================
+    # YT-DLP
+    # =====================================================
+
+    try:
+
+        opts = instagram_options(
+
+            logger=logger,
+
+            use_cookies=True,
+
+            fmt="bv*+ba/b"
+
+        )
+
+        with yt_dlp.YoutubeDL(
+            opts
+        ) as ydl:
+
+            info = ydl.extract_info(
+
+                url,
+
+                download=False
+
+            )
+
+        formats = (
+            info.get("formats")
+            or []
+        )
+
+        audio_formats = []
+        video_formats = []
+        muxed_formats = []
+
+        for f in formats:
+
+            acodec = f.get("acodec")
+            vcodec = f.get("vcodec")
+
+            has_audio = (
+                acodec
+                and acodec != "none"
+            )
+
+            has_video = (
+                vcodec
+                and vcodec != "none"
+            )
+
+            item = {
+
+                "format_id":
+                    f.get("format_id"),
+
+                "ext":
+                    f.get("ext"),
+
+                "protocol":
+                    f.get("protocol"),
+
+                "url_present":
+                    bool(
+                        f.get("url")
+                    ),
+
+                "acodec":
+                    acodec,
+
+                "vcodec":
+                    vcodec,
+
+                "abr":
+                    f.get("abr"),
+
+                "tbr":
+                    f.get("tbr"),
+
+                "resolution":
+                    f.get("resolution"),
+
+                "format_note":
+                    f.get("format_note")
+
+            }
+
+            if has_audio and has_video:
+
+                muxed_formats.append(
+                    item
+                )
+
+            elif has_audio:
+
+                audio_formats.append(
+                    item
+                )
+
+            elif has_video:
+
+                video_formats.append(
+                    item
+                )
+
+        result["yt_dlp"] = {
+
+            "extractor":
+                info.get("extractor"),
+
+            "id":
+                info.get("id"),
+
+            "title":
+                info.get("title"),
+
+            "format_count":
+                len(formats),
+
+            "audio_only":
+                len(audio_formats),
+
+            "video_only":
+                len(video_formats),
+
+            "muxed":
+                len(muxed_formats),
+
+            "audio_formats":
+                audio_formats,
+
+            "muxed_formats":
+                muxed_formats,
+
+            "logs":
+                logger.get()[-80:]
+
+        }
+
+    except Exception as e:
+
+        result["yt_dlp"] = {
+
+            "error":
+                str(e),
+
+            "logs":
+                logger.get()[-80:]
+
+        }
+
+    # =====================================================
+    # PAGE
+    # =====================================================
+
+    result["page"] = inspect_instagram_page(
+
+        url,
+
+        logger
+
+    )
+
+    # =====================================================
+    # EMBED
+    # =====================================================
+
+    result["embed"] = inspect_instagram_embed(
+
+        url,
+
+        logger
+
+    )
+
+    # =====================================================
+    # DIAGNOSIS
+    # =====================================================
+
+    ytdlp_audio = (
+
+        result
+        .get("yt_dlp", {})
+        .get("audio_only", 0)
+
+    )
+
+    ytdlp_muxed = (
+
+        result
+        .get("yt_dlp", {})
+        .get("muxed", 0)
+
+    )
+
+    page_audio = (
+
+        result
+        .get("page", {})
+        .get("audio_url_count", 0)
+
+    )
+
+    page_audio_versions = (
+
+        result
+        .get("page", {})
+        .get("audio_versions_count", 0)
+
+    )
+
+    embed_audio = (
+
+        result
+        .get("embed", {})
+        .get("audio_url_count", 0)
+
+    )
+
+    embed_audio_versions = (
+
+        result
+        .get("embed", {})
+        .get("audio_versions_count", 0)
+
+    )
+
+    if (
+        ytdlp_audio
+        or ytdlp_muxed
+    ):
+
+        result["diagnosis"] = (
+
+            "YT-DLP already receives an "
+            "audio-capable Instagram format."
+
+        )
+
+    elif (
+        page_audio
+        or page_audio_versions
+    ):
+
+        result["diagnosis"] = (
+
+            "Instagram page contains audio "
+            "metadata that YT-DLP did not "
+            "expose. A custom metadata recovery "
+            "path may be possible."
+
+        )
+
+    elif (
+        embed_audio
+        or embed_audio_versions
+    ):
+
+        result["diagnosis"] = (
+
+            "Instagram embed contains audio "
+            "metadata. A custom embed recovery "
+            "path may be possible."
+
+        )
+
+    else:
+
+        result["diagnosis"] = (
+
+            "No audio format was exposed by "
+            "YT-DLP and no obvious audio URL "
+            "or audio_versions data was found "
+            "in the normal Instagram page/embed. "
+            "This indicates that this Reel's "
+            "audio is not being exposed through "
+            "these extraction paths."
+
+        )
+
+    result["debug_logs"] = logger.get()
+
+    return jsonify(result)
 
 
 # =========================================================
@@ -1271,12 +2151,21 @@ def stream():
 def health():
 
     return jsonify({
-        "status": "ok",
-        "deno": os.path.isdir(
-            DENO_PATH
-        ),
-        "ffmpeg": bool(FFMPEG),
-        "ffmpeg_path": FFMPEG,
+
+        "status":
+            "ok",
+
+        "deno":
+            os.path.isdir(
+                DENO_PATH
+            ),
+
+        "ffmpeg":
+            bool(FFMPEG),
+
+        "ffmpeg_path":
+            FFMPEG
+
     })
 
 
@@ -1287,11 +2176,14 @@ def health():
 if __name__ == "__main__":
 
     app.run(
+
         host="0.0.0.0",
+
         port=int(
             os.environ.get(
                 "PORT",
                 10000
             )
         )
+
     )
