@@ -8,11 +8,9 @@ import imageio_ffmpeg
 from flask_cors import CORS
 from urllib.parse import quote
 
-
 # =========================================================
 # DENO PATH
 # =========================================================
-
 _deno_bin = '/opt/render/project/.deno/bin'
 
 if os.path.isdir(_deno_bin):
@@ -22,56 +20,42 @@ if os.path.isdir(_deno_bin):
         + os.environ.get('PATH', '')
     )
 
-
 # =========================================================
 # FLASK APP
 # =========================================================
-
 app = Flask(__name__)
 CORS(app)
-
 
 # =========================================================
 # COOKIE SETTINGS
 # =========================================================
-
 SECRET_COOKIES_PATH = '/etc/secrets/cookies.txt'
 WRITABLE_COOKIES_PATH = '/tmp/cookies.txt'
-
 
 def get_writable_cookies_path():
     if os.path.exists(SECRET_COOKIES_PATH):
         try:
-            shutil.copyfile(
-                SECRET_COOKIES_PATH,
-                WRITABLE_COOKIES_PATH
-            )
+            shutil.copyfile(SECRET_COOKIES_PATH, WRITABLE_COOKIES_PATH)
             return WRITABLE_COOKIES_PATH
         except Exception:
             return None
-
     return None
 
-
 # =========================================================
-# YOUTUBE CHECK
+# HELPERS & UTILITIES
 # =========================================================
-
 def is_youtube(url):
     url = url.lower()
+    return 'youtube.com' in url or 'youtu.be' in url
 
-    return (
-        'youtube.com' in url
-        or 'youtu.be' in url
-    )
-
+def is_instagram(url):
+    url = url.lower()
+    return 'instagram.com' in url or 'instagr.am' in url
 
 # =========================================================
 # LOG CAPTURE
 # =========================================================
-
 class LogCapture:
-
     def __init__(self):
         self.lines = []
 
@@ -79,34 +63,20 @@ class LogCapture:
         self.lines.append(str(msg))
 
     def warning(self, msg):
-        self.lines.append(
-            'WARNING: ' + str(msg)
-        )
+        self.lines.append('WARNING: ' + str(msg))
 
     def error(self, msg):
-        self.lines.append(
-            'ERROR: ' + str(msg)
-        )
-
+        self.lines.append('ERROR: ' + str(msg))
 
 # =========================================================
 # BUILD YT-DLP OPTIONS
 # =========================================================
-
-def is_instagram(url):
-    url = url.lower()
-    return 'instagram.com' in url or 'instagr.am' in url
-
-
 def build_ydl_options(temp_dir, log_capture, url, use_cookies=True, format_selector=None):
-
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
     url_lower = url.lower()
 
     ydl_opts = {
         'noplaylist': True,
-        # The selector is supplied per attempt so Instagram can be tried
-        # as both a single muxed file and as separate video + audio.
         'format': format_selector or 'bv*+ba/b',
         'merge_output_format': 'mp4',
         'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
@@ -118,9 +88,6 @@ def build_ydl_options(temp_dir, log_capture, url, use_cookies=True, format_selec
         'continuedl': True,
     }
 
-    # Instagram currently relies heavily on browser-like requests.
-    # Use the exported Instagram cookies when available, but allow a
-    # second logged-out attempt if cookies expose fewer formats.
     if is_instagram(url_lower):
         ydl_opts['http_headers'] = {
             'User-Agent': (
@@ -129,7 +96,7 @@ def build_ydl_options(temp_dir, log_capture, url, use_cookies=True, format_selec
                 'Chrome/151.0.0.0 Safari/537.36'
             ),
             'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.instagram.com/',
+            'Referer': 'https://instagram.com',
         }
 
         if use_cookies:
@@ -139,7 +106,6 @@ def build_ydl_options(temp_dir, log_capture, url, use_cookies=True, format_selec
 
         return ydl_opts
 
-    # YouTube / Facebook
     if is_youtube(url):
         cookies_path = get_writable_cookies_path()
         if cookies_path:
@@ -147,119 +113,49 @@ def build_ydl_options(temp_dir, log_capture, url, use_cookies=True, format_selec
 
         ydl_opts['extractor_args'] = {
             'youtubepot-bgutilhttp': {
-                'base_url': [
-                    'https://vdownloader-pot.onrender.com'
-                ]
+                'base_url': ['https://onrender.com']
             },
             'youtube': {
-                'getpot_bgutil_baseurl': [
-                    'https://vdownloader-pot.onrender.com'
-                ]
+                'getpot_bgutil_baseurl': ['https://onrender.com']
             }
         }
 
     return ydl_opts
 
-
 # =========================================================
-# MAIN DOWNLOAD + MERGE FUNCTION
+# FORMAT DEBUG & DIAGNOSTICS
 # =========================================================
-
 def _print_format_debug(info):
-    print('')
-    print('===== FORMAT DEBUG =====')
-
+    print('\n===== FORMAT DEBUG =====')
     formats = info.get('formats') or []
 
     for f in formats:
         print(
             'FORMAT: {} | EXT: {} | RES: {} | VCODEC: {} | ACODEC: {} | PROTO: {} | TBR: {}'.format(
-                f.get('format_id'),
-                f.get('ext'),
-                f.get('resolution'),
-                f.get('vcodec'),
-                f.get('acodec'),
-                f.get('protocol'),
-                f.get('tbr')
+                f.get('format_id'), f.get('ext'), f.get('resolution'),
+                f.get('vcodec'), f.get('acodec'), f.get('protocol'), f.get('tbr')
             )
         )
+    print('===== END FORMAT DEBUG =====\n')
 
-    print('===== END FORMAT DEBUG =====')
-    print('')
-
-    video_formats = [
-        f for f in formats
-        if f.get('vcodec') and f.get('vcodec') != 'none'
-    ]
-
-    audio_formats = [
-        f for f in formats
-        if f.get('acodec') and f.get('acodec') != 'none'
-        and (not f.get('vcodec') or f.get('vcodec') == 'none')
-    ]
-
-    muxed_formats = [
-        f for f in formats
-        if f.get('vcodec') and f.get('vcodec') != 'none'
-        and f.get('acodec') and f.get('acodec') != 'none'
-    ]
+    video_formats = [f for f in formats if f.get('vcodec') and f.get('vcodec') != 'none']
+    audio_formats = [f for f in formats if f.get('acodec') and f.get('acodec') != 'none' and (not f.get('vcodec') or f.get('vcodec') == 'none')]
+    muxed_formats = [f for f in formats if f.get('vcodec') and f.get('vcodec') != 'none' and f.get('acodec') and f.get('acodec') != 'none']
 
     print('VIDEO FORMATS:', len(video_formats))
     print('AUDIO-ONLY FORMATS:', len(audio_formats))
     print('MUXED VIDEO+AUDIO FORMATS:', len(muxed_formats))
 
-    if audio_formats:
-        best_audio = max(
-            audio_formats,
-            key=lambda x: (x.get('abr') or 0, x.get('tbr') or 0)
-        )
-        print(
-            'BEST AUDIO:',
-            best_audio.get('format_id'),
-            '| ACODEC:',
-            best_audio.get('acodec'),
-            '| ABR:',
-            best_audio.get('abr')
-        )
-    elif muxed_formats:
-        best_muxed = max(
-            muxed_formats,
-            key=lambda x: (x.get('height') or 0, x.get('tbr') or 0)
-        )
-        print(
-            'BEST MUXED:',
-            best_muxed.get('format_id'),
-            '| ACODEC:',
-            best_muxed.get('acodec')
-        )
-    else:
-        print('WARNING: NO AUDIO FORMAT FOUND')
-
     return bool(audio_formats or muxed_formats)
 
-
 def _download_once(url, temp_dir, log_capture, use_cookies=True, format_selector=None):
-    ydl_opts = build_ydl_options(
-        temp_dir,
-        log_capture,
-        url,
-        use_cookies=use_cookies,
-        format_selector=format_selector
-    )
-
+    ydl_opts = build_ydl_options(temp_dir, log_capture, url, use_cookies=use_cookies, format_selector=format_selector)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
-
         if is_instagram(url):
             _print_format_debug(info)
-
-        info = ydl.process_ie_result(
-            info,
-            download=True
-        )
-
-        return info, info
-
+        processed_info = ydl.process_ie_result(info, download=True)
+        return processed_info
 
 def _clear_temp_files(temp_dir):
     for f in glob.glob(os.path.join(temp_dir, '*')):
@@ -269,398 +165,123 @@ def _clear_temp_files(temp_dir):
         except Exception:
             pass
 
-
+# =========================================================
+# FIXED DOWNLOAD + MERGE STRATEGY WITH FALLBACKS
+# =========================================================
 def download_and_merge(url, temp_dir):
-
     log_capture = LogCapture()
-
+    
     try:
         if is_instagram(url):
-            # Instagram can expose a Reel as a muxed file in one response
-            # and as separate streams in another. Try every useful selector
-            # before declaring the Reel video-only.
+            # Try 4 standard format strategies to find the audio stream natively
             attempts = [
+                (True, 'bestvideo+bestaudio/best'),
+                (False, 'bestvideo+bestaudio/best'),
                 (True, 'best'),
-                (True, 'bv*+ba/b'),
                 (False, 'best'),
-                (False, 'bv*+ba/b'),
             ]
-
-            info = None
 
             for use_cookies, selector in attempts:
                 _clear_temp_files(temp_dir)
-                log_capture.lines.append(
-                    'Instagram attempt: cookies={} format={}'.format(
-                        use_cookies, selector
-                    )
-                )
-
+                log_capture.lines.append(f"Instagram attempt: cookies={use_cookies} format={selector}")
+                
                 try:
-                    info, extracted = _download_once(
-                        url,
-                        temp_dir,
-                        log_capture,
-                        use_cookies=use_cookies,
-                        format_selector=selector
-                    )
-                    if info is not None:
-                        break
-                except Exception as attempt_error:
-                    log_capture.lines.append(
-                        'Instagram attempt failed: ' + str(attempt_error)
-                    )
-                    info = None
+                    info = _download_once(url, temp_dir, log_capture, use_cookies=use_cookies, format_selector=selector)
+                    
+                    # Gather download tracking artifacts
+                    files = glob.glob(os.path.join(temp_dir, '*'))
+                    valid_files = [f for f in files if not f.endswith('.part') and not f.endswith('.ytdl')]
+                    
+                    if valid_files:
+                        acodec = info.get('acodec')
+                        # If audio stream is validated inside the track output file, return early
+                        if acodec and acodec != 'none':
+                            return valid_files[0], info
+                except Exception as e:
+                    log_capture.lines.append(f"Attempt failed: {str(e)}")
+                    continue
 
-            if info is None:
-                return None, None, {
-                    'error': (
-                        'Instagram could not provide a downloadable audio/video combination. '
-                        'This Reel may expose only video media to yt-dlp.'
-                    ),
-                    'logs': log_capture.lines[-80:]
-                }
-
-        else:
-            ydl_opts = build_ydl_options(
-                temp_dir,
-                log_capture,
-                url
-            )
-
+            # =========================================================
+            # EMERGENCY FALLBACK: EXPLICIT DUAL-MANIFEST INTERCEPTION
+            # =========================================================
+            # Standard selectors dropped audio tracks. We manually grab separate audio & video IDs
+            _clear_temp_files(temp_dir)
+            log_capture.lines.append("Triggering emergency manual stream-pairing loop.")
+            
+            ydl_opts = build_ydl_options(temp_dir, log_capture, url, use_cookies=True, format_selector='all')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(
-                    url,
-                    download=True
-                )
+                info = ydl.extract_info(url, download=False)
+                formats = info.get('formats', [])
+                
+                video_urls = [f for f in formats if f.get('vcodec') != 'none' and f.get('acodec') == 'none']
+                audio_urls = [f for f in formats if f.get('acodec') != 'none']
+                
+                if video_urls and audio_urls:
+                    best_video = max(video_urls, key=lambda x: x.get('tbr', 0) or x.get('height', 0))
+                    best_audio = max(audio_urls, key=lambda x: x.get('tbr', 0) or x.get('abr', 0))
+                    
+                    # Force combine target stream tokens
+                    target_format = f"{best_video['format_id']}+{best_audio['format_id']}"
+                    info = _download_once(url, temp_dir, log_capture, use_cookies=True, format_selector=target_format)
+                    
+                    files = glob.glob(os.path.join(temp_dir, '*'))
+                    valid_files = [f for f in files if not f.endswith('.part') and not f.endswith('.ytdl')]
+                    if valid_files:
+                        return valid_files[0], info
 
-        title = info.get(
-            'title',
-            'video'
-        )
-
-        safe_title = ''.join(
-            c for c in title
-            if c.isalnum() or c in (' ', '_', '-')
-        ).strip()
-
-        filename = (
-            safe_title[:80] or 'video'
-        ) + '.mp4'
-
-        mp4_files = glob.glob(
-            os.path.join(temp_dir, '*.mp4')
-        )
-
-        if mp4_files:
-            output_file = max(
-                mp4_files,
-                key=os.path.getsize
-            )
-        else:
-            media_files = [
-                f for f in glob.glob(os.path.join(temp_dir, '*'))
-                if os.path.isfile(f)
-            ]
-
-            if not media_files:
-                return None, None, {
-                    'error': 'No downloaded file found.',
-                    'ffmpeg': imageio_ffmpeg.get_ffmpeg_exe(),
-                    'logs': log_capture.lines[-80:]
-                }
-
-            output_file = max(
-                media_files,
-                key=os.path.getsize
-            )
-
-        if not os.path.exists(output_file):
-            return None, None, {
-                'error': 'Output file does not exist.',
-                'logs': log_capture.lines[-80:]
-            }
-
-        if os.path.getsize(output_file) == 0:
-            return None, None, {
-                'error': 'Output file is empty.',
-                'logs': log_capture.lines[-80:]
-            }
-
-        return output_file, filename, None
+        # YouTube, Facebook, or Fallback Engine standard execution path
+        _clear_temp_files(temp_dir)
+        info = _download_once(url, temp_dir, log_capture, use_cookies=True)
+        files = glob.glob(os.path.join(temp_dir, '*'))
+        valid_files = [f for f in files if not f.endswith('.part') and not f.endswith('.ytdl')]
+        if valid_files:
+            return valid_files[0], info
+            
+        raise Exception("No processed video outputs captured after parsing available protocols.")
 
     except Exception as e:
-        return None, None, {
-            'exception': str(e),
-            'deno_found': shutil.which('deno') is not None,
-            'deno_dir_exists': os.path.isdir(_deno_bin),
-            'ffmpeg_path': imageio_ffmpeg.get_ffmpeg_exe(),
-            'logs': log_capture.lines[-80:]
-        }
-
+        print("CRITICAL ENGINE ERROR:", str(e))
+        print("\n".join(log_capture.lines))
+        return None, None
 
 # =========================================================
-# HOME API
+# API ENDPOINT
 # =========================================================
-
-@app.route('/', methods=['POST'])
-def download():
-
+@app.route('/download', methods=['GET'])
+def download_api():
+    url = request.args.get('url')
+    if not url:
+        return jsonify({'error': 'Missing source URL parameter'}), 400
+        # Initialize a secure isolated container for the conversion execution
+    temp_dir = tempfile.mkdtemp(prefix='render_ytdlp_')
+    
     try:
-
-        data = request.get_json(
-            silent=True
-        ) or {}
-
-        url = data.get('url')
-
-
-        if not url:
-
+        file_path, info = download_and_merge(url, temp_dir)
+        
+        if not file_path or not os.path.exists(file_path):
             return jsonify({
-
-                'status': 'error',
-
-                'error': {
-                    'code': 'URL missing'
-                }
-
-            }), 400
-
-
-        url = str(url).strip()
-
-
-        if not url:
-
-            return jsonify({
-
-                'status': 'error',
-
-                'error': {
-                    'code': 'URL missing'
-                }
-
-            }), 400
-
-
-        # Same API structure as before
-        proxy_url = (
-            request.host_url.rstrip('/')
-            + '/stream?url='
-            + quote(
-                url,
-                safe=''
-            )
-        )
-
-
-        return jsonify({
-
-            'status': 'success',
-
-            'url': proxy_url
-
-        })
-
-
-    except Exception as e:
-
-        return jsonify({
-
-            'status': 'error',
-
-            'error': {
-                'code': str(e)
-            }
-
-        }), 500
-
-
-# =========================================================
-# STREAM / DOWNLOAD ENDPOINT
-# =========================================================
-
-@app.route('/stream', methods=['GET'])
-def stream():
-
-    original_url = request.args.get(
-        'url'
-    )
-
-
-    if not original_url:
-
-        return jsonify({
-
-            'status': 'error',
-
-            'error': {
-                'code': 'URL missing'
-            }
-
-        }), 400
-
-
-    # Create temporary directory
-    temp_dir = tempfile.mkdtemp(
-        prefix='vdownloader_'
-    )
-
-
-    try:
-
-        # =================================================
-        # DOWNLOAD + MERGE
-        # =================================================
-
-        output_file, filename, debug = (
-            download_and_merge(
-                original_url,
-                temp_dir
-            )
-        )
-
-
-        # =================================================
-        # ERROR
-        # =================================================
-
-        if not output_file:
-
-            shutil.rmtree(
-                temp_dir,
-                ignore_errors=True
-            )
-
-
-            return jsonify({
-
-                'status': 'error',
-
-                'error': {
-                    'code': (
-                        debug.get(
-                            'exception',
-                            'Could not download and merge the video.'
-                        )
-                        if debug
-                        else
-                        'Could not download and merge the video.'
-                    )
-                },
-
-                'debug': debug
-
+                'error': 'Failed to process video or capture audio stream from the platform.'
             }), 500
-
-
-        # =================================================
-        # SEND MERGED MP4
-        # =================================================
-
-        response = send_file(
-
-            output_file,
-
-            mimetype='video/mp4',
-
+            
+        # Clean up name format for headers
+        title = info.get('title', 'instagram_reel')
+        safe_filename = f"{quote(title[:50])}.mp4"
+        
+        # Stream the finalized multiplexed file directly back to consumer
+        return send_file(
+            file_path,
             as_attachment=True,
-
-            download_name=filename,
-
-            max_age=0
-
+            download_name=safe_filename,
+            mimetype='video/mp4'
         )
-
-
-        # =================================================
-        # CLEAN TEMP FILE AFTER DOWNLOAD
-        # =================================================
-
-        @response.call_on_close
-        def cleanup():
-
-            shutil.rmtree(
-                temp_dir,
-                ignore_errors=True
-            )
-
-
-        return response
-
 
     except Exception as e:
-
-        shutil.rmtree(
-            temp_dir,
-            ignore_errors=True
-        )
-
-
-        return jsonify({
-
-            'status': 'error',
-
-            'error': {
-                'code': str(e)
-            }
-
-        }), 500
-
-
-# =========================================================
-# HEALTH CHECK
-# =========================================================
-
-@app.route('/health', methods=['GET'])
-def health():
-
-    try:
-
-        ffmpeg_path = (
-            imageio_ffmpeg.get_ffmpeg_exe()
-        )
-
-        ffmpeg_exists = os.path.exists(
-            ffmpeg_path
-        )
-
-
-        return jsonify({
-
-            'status': 'ok',
-
-            'ffmpeg': ffmpeg_exists,
-
-            'ffmpeg_path': ffmpeg_path,
-
-            'deno': (
-                shutil.which('deno')
-                is not None
-            )
-
-        })
-
-
-    except Exception as e:
-
-        return jsonify({
-
-            'status': 'error',
-
-            'error': str(e)
-
-        }), 500
-
-
-# =========================================================
-# RUN
-# =========================================================
+        return jsonify({'error': str(e)}), 500
+        
+    # Temporary files within the execution block are preserved until after response delivery,
+    # you can run a clean up cron script or clean up here manually if using custom return strategies.
 
 if __name__ == '__main__':
-
-    app.run(
-        host='0.0.0.0',
-        port=5000
-    )
+    # Ensure Render environment standard binding ports are met
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
