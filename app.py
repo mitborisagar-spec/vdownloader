@@ -1,69 +1,127 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, Response, stream_with_context
+from flask_cors import CORS
 import yt_dlp
+import requests
 import os
 import shutil
 import tempfile
-import glob
-import imageio_ffmpeg
-from flask_cors import CORS
-from urllib.parse import quote
+import uuid
+import subprocess
+import re
+import html
+import json
+import time
 
 
 # =========================================================
-# DENO PATH
-# =========================================================
-
-_deno_bin = '/opt/render/project/.deno/bin'
-
-if os.path.isdir(_deno_bin):
-    os.environ['PATH'] = (
-        _deno_bin
-        + os.pathsep
-        + os.environ.get('PATH', '')
-    )
-
-
-# =========================================================
-# FLASK APP
+# APP
 # =========================================================
 
 app = Flask(__name__)
-CORS(app)
+
+CORS(
+    app,
+    resources={r"/*": {"origins": "*"}},
+    methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"]
+)
 
 
 # =========================================================
-# COOKIE SETTINGS
+# PATHS
 # =========================================================
 
-SECRET_COOKIES_PATH = '/etc/secrets/cookies.txt'
-WRITABLE_COOKIES_PATH = '/tmp/cookies.txt'
+DENO_PATH = "/opt/render/project/.deno/bin"
+
+if os.path.isdir(DENO_PATH):
+    os.environ["PATH"] = DENO_PATH + os.pathsep + os.environ.get("PATH", "")
 
 
-def get_writable_cookies_path():
-    if os.path.exists(SECRET_COOKIES_PATH):
-        try:
-            shutil.copyfile(
-                SECRET_COOKIES_PATH,
-                WRITABLE_COOKIES_PATH
-            )
-            return WRITABLE_COOKIES_PATH
-        except Exception:
-            return None
+COOKIES_SOURCE = "/etc/secrets/cookies.txt"
+COOKIES_TMP = "/tmp/cookies.txt"
+
+
+# =========================================================
+# COPY COOKIES
+# =========================================================
+
+def prepare_cookies():
+    try:
+        if os.path.exists(COOKIES_SOURCE):
+            shutil.copyfile(COOKIES_SOURCE, COOKIES_TMP)
+            return COOKIES_TMP
+    except Exception:
+        pass
 
     return None
 
 
 # =========================================================
-# YOUTUBE CHECK
+# HELPERS
 # =========================================================
 
 def is_youtube(url):
-    url = url.lower()
+    u = (url or "").lower()
 
     return (
-        'youtube.com' in url
-        or 'youtu.be' in url
+        "youtube.com/" in u
+        or "youtu.be/" in u
+        or "youtube-nocookie.com/" in u
     )
+
+
+def is_instagram(url):
+    u = (url or "").lower()
+
+    return (
+        "instagram.com/" in u
+        or "www.instagram.com/" in u
+    )
+
+
+def is_facebook(url):
+    u = (url or "").lower()
+
+    return (
+        "facebook.com/" in u
+        or "fb.watch/" in u
+        or "m.facebook.com/" in u
+    )
+
+
+def safe_filename(value):
+    value = value or "video"
+
+    value = re.sub(
+        r'[\\/:*?"<>|]+',
+        "_",
+        value
+    )
+
+    value = re.sub(
+        r"\s+",
+        " ",
+        value
+    ).strip()
+
+    return value[:150] or "video"
+
+
+def find_ffmpeg():
+    candidates = [
+        shutil.which("ffmpeg"),
+        "/usr/bin/ffmpeg",
+        "/opt/render/project/src/.venv/bin/ffmpeg",
+    ]
+
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+
+    return None
+
+
+FFMPEG = find_ffmpeg()
 
 
 # =========================================================
@@ -71,7 +129,6 @@ def is_youtube(url):
 # =========================================================
 
 class LogCapture:
-
     def __init__(self):
         self.lines = []
 
@@ -79,332 +136,864 @@ class LogCapture:
         self.lines.append(str(msg))
 
     def warning(self, msg):
-        self.lines.append(
-            'WARNING: ' + str(msg)
-        )
+        self.lines.append("WARNING: " + str(msg))
 
     def error(self, msg):
-        self.lines.append(
-            'ERROR: ' + str(msg)
-        )
+        self.lines.append("ERROR: " + str(msg))
+
+    def info(self, msg):
+        self.lines.append(str(msg))
+
+    def get(self):
+        return self.lines[-300:]
 
 
 # =========================================================
-# BUILD YT-DLP OPTIONS
+# COMMON YT-DLP OPTIONS
 # =========================================================
 
-def is_instagram(url):
-    url = url.lower()
-    return 'instagram.com' in url or 'instagr.am' in url
+def build_common_options(logger=None):
 
-
-def build_ydl_options(temp_dir, log_capture, url, use_cookies=True, format_selector=None):
-
-    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-    url_lower = url.lower()
-
-    ydl_opts = {
-        'noplaylist': True,
-        # The selector is supplied per attempt so Instagram can be tried
-        # as both a single muxed file and as separate video + audio.
-        'format': format_selector or 'bv*+ba/b',
-        'merge_output_format': 'mp4',
-        'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
-        'ffmpeg_location': ffmpeg_path,
-        'logger': log_capture,
-        'verbose': True,
-        'retries': 3,
-        'fragment_retries': 3,
-        'continuedl': True,
+    opts = {
+        "quiet": True,
+        "no_warnings": False,
+        "noplaylist": True,
+        "restrictfilenames": True,
+        "nocheckcertificate": True,
+        "socket_timeout": 30,
+        "retries": 2,
+        "fragment_retries": 2,
+        "concurrent_fragment_downloads": 4,
+        "logger": logger,
     }
 
-    # Instagram currently relies heavily on browser-like requests.
-    # Use the exported Instagram cookies when available, but allow a
-    # second logged-out attempt if cookies expose fewer formats.
-    if is_instagram(url_lower):
-        ydl_opts['http_headers'] = {
-            'User-Agent': (
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/151.0.0.0 Safari/537.36'
+    return opts
+
+
+# =========================================================
+# INSTAGRAM HEADERS
+# =========================================================
+
+def instagram_headers():
+
+    return {
+        "User-Agent": (
+            "Mozilla/5.0 (Linux; Android 10; K) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/151.0.0.0 Mobile Safari/537.36"
+        ),
+        "Accept": (
+            "text/html,application/xhtml+xml,"
+            "application/xml;q=0.9,image/avif,"
+            "image/webp,*/*;q=0.8"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.instagram.com/",
+        "Connection": "keep-alive",
+    }
+
+
+# =========================================================
+# YOUTUBE OPTIONS
+# =========================================================
+
+def youtube_options(logger=None):
+
+    opts = build_common_options(logger)
+
+    opts.update({
+        "format": "bv*+ba/b",
+        "merge_output_format": "mp4",
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/151.0.0.0 Safari/537.36"
             ),
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.instagram.com/',
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    })
+
+    cookies = prepare_cookies()
+
+    if cookies:
+        opts["cookiefile"] = cookies
+
+    # YouTube POT provider
+    opts["extractor_args"] = {
+        "youtube": {
+            "player_client": [
+                "web",
+                "web_safari",
+                "mweb",
+            ]
         }
+    }
 
-        if use_cookies:
-            cookies_path = get_writable_cookies_path()
-            if cookies_path:
-                ydl_opts['cookiefile'] = cookies_path
-
-        return ydl_opts
-
-    # YouTube / Facebook
-    if is_youtube(url):
-        cookies_path = get_writable_cookies_path()
-        if cookies_path:
-            ydl_opts['cookiefile'] = cookies_path
-
-        ydl_opts['extractor_args'] = {
-            'youtubepot-bgutilhttp': {
-                'base_url': [
-                    'https://vdownloader-pot.onrender.com'
-                ]
-            },
-            'youtube': {
-                'getpot_bgutil_baseurl': [
-                    'https://vdownloader-pot.onrender.com'
-                ]
-            }
-        }
-
-    return ydl_opts
+    return opts
 
 
 # =========================================================
-# MAIN DOWNLOAD + MERGE FUNCTION
+# FACEBOOK OPTIONS
 # =========================================================
 
-def _print_format_debug(info):
-    print('')
-    print('===== FORMAT DEBUG =====')
+def facebook_options(logger=None):
 
-    formats = info.get('formats') or []
+    opts = build_common_options(logger)
+
+    opts.update({
+        "format": "bv*+ba/b",
+        "merge_output_format": "mp4",
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 "
+                "(KHTML, like Gecko) "
+                "Chrome/151.0.0.0 Safari/537.36"
+            ),
+        },
+    })
+
+    cookies = prepare_cookies()
+
+    if cookies:
+        opts["cookiefile"] = cookies
+
+    return opts
+
+
+# =========================================================
+# INSTAGRAM OPTIONS
+# =========================================================
+
+def instagram_options(
+    logger=None,
+    use_cookies=True,
+    fmt="bv*+ba/b"
+):
+
+    opts = build_common_options(logger)
+
+    opts.update({
+        "format": fmt,
+        "merge_output_format": "mp4",
+        "http_headers": instagram_headers(),
+    })
+
+    if use_cookies:
+        cookies = prepare_cookies()
+
+        if cookies:
+            opts["cookiefile"] = cookies
+
+    return opts
+
+
+# =========================================================
+# FORMAT SUMMARY
+# =========================================================
+
+def format_summary(info):
+
+    formats = info.get("formats") or []
+
+    audio_examples = []
+    video_examples = []
+    muxed_examples = []
+
+    audio_only = 0
+    video_only = 0
+    muxed = 0
 
     for f in formats:
-        print(
-            'FORMAT: {} | EXT: {} | RES: {} | VCODEC: {} | ACODEC: {} | PROTO: {} | TBR: {}'.format(
-                f.get('format_id'),
-                f.get('ext'),
-                f.get('resolution'),
-                f.get('vcodec'),
-                f.get('acodec'),
-                f.get('protocol'),
-                f.get('tbr')
-            )
-        )
 
-    print('===== END FORMAT DEBUG =====')
-    print('')
+        acodec = f.get("acodec")
+        vcodec = f.get("vcodec")
 
-    video_formats = [
-        f for f in formats
-        if f.get('vcodec') and f.get('vcodec') != 'none'
-    ]
+        item = {
+            "id": f.get("format_id"),
+            "ext": f.get("ext"),
+            "protocol": f.get("protocol"),
+            "resolution": f.get("resolution"),
+            "vcodec": acodec and f.get("vcodec"),
+            "acodec": acodec,
+            "abr": f.get("abr"),
+            "tbr": f.get("tbr"),
+            "format_note": f.get("format_note"),
+        }
 
-    audio_formats = [
-        f for f in formats
-        if f.get('acodec') and f.get('acodec') != 'none'
-        and (not f.get('vcodec') or f.get('vcodec') == 'none')
-    ]
+        has_audio = acodec and acodec != "none"
+        has_video = vcodec and vcodec != "none"
 
-    muxed_formats = [
-        f for f in formats
-        if f.get('vcodec') and f.get('vcodec') != 'none'
-        and f.get('acodec') and f.get('acodec') != 'none'
-    ]
+        if has_audio and has_video:
+            muxed += 1
 
-    print('VIDEO FORMATS:', len(video_formats))
-    print('AUDIO-ONLY FORMATS:', len(audio_formats))
-    print('MUXED VIDEO+AUDIO FORMATS:', len(muxed_formats))
+            if len(muxed_examples) < 5:
+                muxed_examples.append(item)
 
-    if audio_formats:
-        best_audio = max(
-            audio_formats,
-            key=lambda x: (x.get('abr') or 0, x.get('tbr') or 0)
-        )
-        print(
-            'BEST AUDIO:',
-            best_audio.get('format_id'),
-            '| ACODEC:',
-            best_audio.get('acodec'),
-            '| ABR:',
-            best_audio.get('abr')
-        )
-    elif muxed_formats:
-        best_muxed = max(
-            muxed_formats,
-            key=lambda x: (x.get('height') or 0, x.get('tbr') or 0)
-        )
-        print(
-            'BEST MUXED:',
-            best_muxed.get('format_id'),
-            '| ACODEC:',
-            best_muxed.get('acodec')
-        )
-    else:
-        print('WARNING: NO AUDIO FORMAT FOUND')
+        elif has_audio:
+            audio_only += 1
 
-    return bool(audio_formats or muxed_formats)
+            if len(audio_examples) < 5:
+                audio_examples.append(item)
+
+        elif has_video:
+            video_only += 1
+
+            if len(video_examples) < 5:
+                video_examples.append(item)
+
+    return {
+        "total": len(formats),
+        "audio_only": audio_only,
+        "video_only": video_only,
+        "muxed": muxed,
+        "audio_examples": audio_examples,
+        "video_examples": video_examples,
+        "muxed_examples": muxed_examples,
+    }
 
 
-def _download_once(url, temp_dir, log_capture, use_cookies=True, format_selector=None):
-    ydl_opts = build_ydl_options(
-        temp_dir,
-        log_capture,
-        url,
-        use_cookies=use_cookies,
-        format_selector=format_selector
-    )
+# =========================================================
+# AUDIO CHECK
+# =========================================================
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+def has_audio_stream(path):
 
-        if is_instagram(url):
-            _print_format_debug(info)
+    if not path or not os.path.exists(path):
+        return False
 
-        info = ydl.process_ie_result(
-            info,
-            download=True
-        )
-
-        return info, info
-
-
-def _clear_temp_files(temp_dir):
-    for f in glob.glob(os.path.join(temp_dir, '*')):
-        try:
-            if os.path.isfile(f):
-                os.remove(f)
-        except Exception:
-            pass
-
-
-def download_and_merge(url, temp_dir):
-
-    log_capture = LogCapture()
+    if not FFMPEG:
+        return False
 
     try:
-        if is_instagram(url):
-            # Instagram can expose a Reel as a muxed file in one response
-            # and as separate streams in another. Try every useful selector
-            # before declaring the Reel video-only.
-            attempts = [
-                (True, 'best'),
-                (True, 'bv*+ba/b'),
-                (False, 'best'),
-                (False, 'bv*+ba/b'),
-            ]
 
-            info = None
-
-            for use_cookies, selector in attempts:
-                _clear_temp_files(temp_dir)
-                log_capture.lines.append(
-                    'Instagram attempt: cookies={} format={}'.format(
-                        use_cookies, selector
-                    )
-                )
-
-                try:
-                    info, extracted = _download_once(
-                        url,
-                        temp_dir,
-                        log_capture,
-                        use_cookies=use_cookies,
-                        format_selector=selector
-                    )
-                    if info is not None:
-                        break
-                except Exception as attempt_error:
-                    log_capture.lines.append(
-                        'Instagram attempt failed: ' + str(attempt_error)
-                    )
-                    info = None
-
-            if info is None:
-                return None, None, {
-                    'error': (
-                        'Instagram could not provide a downloadable audio/video combination. '
-                        'This Reel may expose only video media to yt-dlp.'
-                    ),
-                    'logs': log_capture.lines[-80:]
-                }
-
-        else:
-            ydl_opts = build_ydl_options(
-                temp_dir,
-                log_capture,
-                url
-            )
-
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(
-                    url,
-                    download=True
-                )
-
-        title = info.get(
-            'title',
-            'video'
+        result = subprocess.run(
+            [
+                FFMPEG,
+                "-hide_banner",
+                "-i",
+                path,
+                "-map",
+                "0:a:0",
+                "-f",
+                "null",
+                "-"
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30
         )
 
-        safe_title = ''.join(
-            c for c in title
-            if c.isalnum() or c in (' ', '_', '-')
-        ).strip()
-
-        filename = (
-            safe_title[:80] or 'video'
-        ) + '.mp4'
-
-        mp4_files = glob.glob(
-            os.path.join(temp_dir, '*.mp4')
+        output = (
+            (result.stdout or "") +
+            "\n" +
+            (result.stderr or "")
         )
 
-        if mp4_files:
-            output_file = max(
-                mp4_files,
-                key=os.path.getsize
+        return (
+            result.returncode == 0
+            and "Audio:" in output
+        )
+
+    except Exception:
+        return False
+
+
+# =========================================================
+# FIND DOWNLOADED FILE
+# =========================================================
+
+def find_downloaded_file(directory):
+
+    if not os.path.exists(directory):
+        return None
+
+    files = []
+
+    for name in os.listdir(directory):
+
+        path = os.path.join(directory, name)
+
+        if os.path.isfile(path):
+            files.append(path)
+
+    if not files:
+        return None
+
+    files.sort(
+        key=lambda p: os.path.getmtime(p),
+        reverse=True
+    )
+
+    return files[0]
+
+
+# =========================================================
+# NORMAL YT-DLP DOWNLOAD
+# =========================================================
+
+def download_with_ytdlp(
+    url,
+    workdir,
+    opts,
+    logger
+):
+
+    try:
+
+        opts = dict(opts)
+
+        opts["outtmpl"] = os.path.join(
+            workdir,
+            "%(id)s.%(ext)s"
+        )
+
+        with yt_dlp.YoutubeDL(opts) as ydl:
+
+            info = ydl.extract_info(
+                url,
+                download=True
             )
-        else:
-            media_files = [
-                f for f in glob.glob(os.path.join(temp_dir, '*'))
-                if os.path.isfile(f)
-            ]
 
-            if not media_files:
-                return None, None, {
-                    'error': 'No downloaded file found.',
-                    'ffmpeg': imageio_ffmpeg.get_ffmpeg_exe(),
-                    'logs': log_capture.lines[-80:]
-                }
+            downloaded = find_downloaded_file(workdir)
 
-            output_file = max(
-                media_files,
-                key=os.path.getsize
-            )
-
-        if not os.path.exists(output_file):
-            return None, None, {
-                'error': 'Output file does not exist.',
-                'logs': log_capture.lines[-80:]
+            return {
+                "success": bool(downloaded),
+                "path": downloaded,
+                "info": info,
             }
-
-        if os.path.getsize(output_file) == 0:
-            return None, None, {
-                'error': 'Output file is empty.',
-                'logs': log_capture.lines[-80:]
-            }
-
-        return output_file, filename, None
 
     except Exception as e:
-        return None, None, {
-            'exception': str(e),
-            'deno_found': shutil.which('deno') is not None,
-            'deno_dir_exists': os.path.isdir(_deno_bin),
-            'ffmpeg_path': imageio_ffmpeg.get_ffmpeg_exe(),
-            'logs': log_capture.lines[-80:]
+
+        logger.error(
+            "yt-dlp download failed: " + str(e)
+        )
+
+        return {
+            "success": False,
+            "path": None,
+            "info": None,
+            "error": str(e),
         }
 
 
 # =========================================================
-# HOME API
+# INSTAGRAM PAGE FALLBACK
+#
+# This does NOT try to magically create missing audio.
+# It checks whether Instagram's page itself exposes a
+# directly usable media URL that yt-dlp's format list
+# did not expose.
 # =========================================================
 
-@app.route('/', methods=['POST'])
+def instagram_page_fallback(
+    url,
+    workdir,
+    logger
+):
+
+    session = requests.Session()
+
+    session.headers.update(
+        instagram_headers()
+    )
+
+    cookies = prepare_cookies()
+
+    if cookies:
+        try:
+            with open(cookies, "r", encoding="utf-8") as f:
+                cookie_text = f.read()
+
+            # Basic Netscape cookie import
+            for line in cookie_text.splitlines():
+
+                if (
+                    not line
+                    or line.startswith("#")
+                    or len(line.split("\t")) < 7
+                ):
+                    continue
+
+                parts = line.split("\t")
+
+                domain = parts[0]
+                name = parts[5]
+                value = parts[6]
+
+                session.cookies.set(
+                    name,
+                    value,
+                    domain=domain
+                )
+
+        except Exception as e:
+
+            logger.warning(
+                "Could not import Instagram cookies: "
+                + str(e)
+            )
+
+    try:
+
+        response = session.get(
+            url,
+            timeout=30,
+            allow_redirects=True
+        )
+
+        if response.status_code != 200:
+
+            logger.warning(
+                "Instagram page fallback HTTP "
+                + str(response.status_code)
+            )
+
+            return None
+
+        page = response.text
+
+        # -------------------------------------------------
+        # 1. og:video
+        # -------------------------------------------------
+
+        og_patterns = [
+            r'<meta[^>]+property=["\']og:video["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:video["\']',
+            r'<meta[^>]+property=["\']og:video:secure_url["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:video:secure_url["\']',
+        ]
+
+        media_urls = []
+
+        for pattern in og_patterns:
+
+            matches = re.findall(
+                pattern,
+                page,
+                flags=re.I
+            )
+
+            for match in matches:
+
+                value = html.unescape(match)
+
+                if value not in media_urls:
+                    media_urls.append(value)
+
+        # -------------------------------------------------
+        # 2. Search escaped media URLs
+        # -------------------------------------------------
+
+        escaped_patterns = [
+            r'"video_url"\s*:\s*"([^"]+)"',
+            r'"video_versions"\s*:\s*\[(.*?)\]',
+        ]
+
+        for pattern in escaped_patterns:
+
+            matches = re.findall(
+                pattern,
+                page,
+                flags=re.I | re.S
+            )
+
+            for match in matches:
+
+                if isinstance(match, tuple):
+                    continue
+
+                value = match
+
+                value = value.replace(
+                    "\\/",
+                    "/"
+                )
+
+                value = value.replace(
+                    "\\u0026",
+                    "&"
+                )
+
+                value = html.unescape(value)
+
+                if value.startswith("http"):
+
+                    if (
+                        ".mp4" in value
+                        or "video" in value.lower()
+                    ):
+                        if value not in media_urls:
+                            media_urls.append(value)
+
+        if not media_urls:
+
+            logger.warning(
+                "Instagram page fallback found no direct media URL"
+            )
+
+            return None
+
+        # -------------------------------------------------
+        # Download candidate media
+        # -------------------------------------------------
+
+        for index, media_url in enumerate(
+            media_urls[:10]
+        ):
+
+            try:
+
+                logger.info(
+                    "Instagram page fallback candidate "
+                    + str(index + 1)
+                )
+
+                filename = os.path.join(
+                    workdir,
+                    "instagram_fallback_"
+                    + str(index)
+                    + ".mp4"
+                )
+
+                r = session.get(
+                    media_url,
+                    stream=True,
+                    timeout=45,
+                    allow_redirects=True
+                )
+
+                content_type = (
+                    r.headers.get(
+                        "Content-Type",
+                        ""
+                    ).lower()
+                )
+
+                if r.status_code != 200:
+                    continue
+
+                if (
+                    "video" not in content_type
+                    and "mp4" not in content_type
+                ):
+                    continue
+
+                with open(
+                    filename,
+                    "wb"
+                ) as output:
+
+                    for chunk in r.iter_content(
+                        chunk_size=1024 * 256
+                    ):
+
+                        if chunk:
+                            output.write(chunk)
+
+                if (
+                    os.path.exists(filename)
+                    and os.path.getsize(filename) > 10000
+                ):
+
+                    # IMPORTANT:
+                    # Accept only if actual file has audio.
+                    if has_audio_stream(filename):
+
+                        logger.info(
+                            "Instagram fallback found "
+                            "a media file WITH audio"
+                        )
+
+                        return filename
+
+                    logger.info(
+                        "Instagram fallback media "
+                        "has no audio"
+                    )
+
+            except Exception as e:
+
+                logger.warning(
+                    "Instagram fallback candidate failed: "
+                    + str(e)
+                )
+
+        return None
+
+    except Exception as e:
+
+        logger.error(
+            "Instagram page fallback failed: "
+            + str(e)
+        )
+
+        return None
+
+
+# =========================================================
+# INSTAGRAM DOWNLOAD
+# =========================================================
+
+def download_instagram(url, workdir, logger):
+
+    attempts = [
+
+        # 1. Cookies + normal muxed/audio
+        (
+            True,
+            "bv*+ba/b",
+            "cookies-normal"
+        ),
+
+        # 2. Cookies + explicitly prefer muxed
+        (
+            True,
+            "best[vcodec!=none][acodec!=none]/bv*+ba/b",
+            "cookies-muxed"
+        ),
+
+        # 3. Public normal
+        (
+            False,
+            "bv*+ba/b",
+            "public-normal"
+        ),
+
+        # 4. Public muxed
+        (
+            False,
+            "best[vcodec!=none][acodec!=none]/bv*+ba/b",
+            "public-muxed"
+        ),
+    ]
+
+    last_summary = None
+
+    for use_cookies, fmt, label in attempts:
+
+        logger.info(
+            "Instagram attempt: " + label
+        )
+
+        try:
+
+            opts = instagram_options(
+                logger=logger,
+                use_cookies=use_cookies,
+                fmt=fmt
+            )
+
+            # First extract without downloading.
+            with yt_dlp.YoutubeDL(opts) as ydl:
+
+                info = ydl.extract_info(
+                    url,
+                    download=False
+                )
+
+            summary = format_summary(info)
+
+            last_summary = summary
+
+            logger.info(
+                "Instagram formats: "
+                + json.dumps(
+                    summary,
+                    ensure_ascii=False
+                )
+            )
+
+            # If Instagram actually exposed audio,
+            # download normally.
+            if (
+                summary["muxed"] > 0
+                or summary["audio_only"] > 0
+            ):
+
+                result = download_with_ytdlp(
+                    url,
+                    workdir,
+                    opts,
+                    logger
+                )
+
+                if result["success"]:
+
+                    path = result["path"]
+
+                    if has_audio_stream(path):
+
+                        logger.info(
+                            "Instagram normal download "
+                            "has audio"
+                        )
+
+                        return {
+                            "success": True,
+                            "path": path,
+                            "summary": summary,
+                        }
+
+                    logger.warning(
+                        "Downloaded Instagram file "
+                        "still has no audio"
+                    )
+
+            else:
+
+                logger.warning(
+                    "Instagram exposed no usable audio "
+                    "in this attempt"
+                )
+
+        except Exception as e:
+
+            logger.error(
+                "Instagram attempt "
+                + label
+                + " failed: "
+                + str(e)
+            )
+
+    # =====================================================
+    # PAGE LEVEL FALLBACK
+    # =====================================================
+
+    logger.info(
+        "Starting Instagram page-level audio fallback"
+    )
+
+    fallback_path = instagram_page_fallback(
+        url,
+        workdir,
+        logger
+    )
+
+    if fallback_path:
+
+        return {
+            "success": True,
+            "path": fallback_path,
+            "summary": last_summary,
+            "fallback": "page-media"
+        }
+
+    # =====================================================
+    # FINAL ERROR
+    # =====================================================
+
+    return {
+        "success": False,
+        "path": None,
+        "summary": last_summary,
+        "error": (
+            "Instagram did not expose a usable audio "
+            "stream for this Reel. The available "
+            "Instagram formats contained video but "
+            "no audio stream."
+        )
+    }
+
+
+# =========================================================
+# GENERAL DOWNLOAD
+# =========================================================
+
+def download_video(url, workdir, logger):
+
+    # Instagram gets special handling.
+    if is_instagram(url):
+
+        return download_instagram(
+            url,
+            workdir,
+            logger
+        )
+
+    # YouTube
+    if is_youtube(url):
+
+        logger.info(
+            "Using YouTube downloader"
+        )
+
+        opts = youtube_options(
+            logger
+        )
+
+        result = download_with_ytdlp(
+            url,
+            workdir,
+            opts,
+            logger
+        )
+
+        return result
+
+    # Facebook
+    if is_facebook(url):
+
+        logger.info(
+            "Using Facebook downloader"
+        )
+
+        opts = facebook_options(
+            logger
+        )
+
+        result = download_with_ytdlp(
+            url,
+            workdir,
+            opts,
+            logger
+        )
+
+        return result
+
+    # Other supported URLs
+    logger.info(
+        "Using generic downloader"
+    )
+
+    opts = build_common_options(
+        logger
+    )
+
+    opts.update({
+        "format": "bv*+ba/b",
+        "merge_output_format": "mp4",
+    })
+
+    cookies = prepare_cookies()
+
+    if cookies:
+        opts["cookiefile"] = cookies
+
+    return download_with_ytdlp(
+        url,
+        workdir,
+        opts,
+        logger
+    )
+
+
+# =========================================================
+# ROOT API
+# =========================================================
+
+@app.route(
+    "/",
+    methods=["POST", "OPTIONS"]
+)
 def download():
+
+    if request.method == "OPTIONS":
+        return "", 204
 
     try:
 
@@ -412,255 +1001,297 @@ def download():
             silent=True
         ) or {}
 
-        url = data.get('url')
-
-
-        if not url:
-
-            return jsonify({
-
-                'status': 'error',
-
-                'error': {
-                    'code': 'URL missing'
-                }
-
-            }), 400
-
-
-        url = str(url).strip()
-
+        url = (
+            data.get("url")
+            or data.get("video_url")
+            or ""
+        ).strip()
 
         if not url:
 
             return jsonify({
-
-                'status': 'error',
-
-                'error': {
-                    'code': 'URL missing'
+                "status": "error",
+                "error": {
+                    "code": "URL_REQUIRED"
                 }
-
             }), 400
 
+        if not (
+            url.startswith("http://")
+            or url.startswith("https://")
+        ):
 
-        # Same API structure as before
-        proxy_url = (
-            request.host_url.rstrip('/')
-            + '/stream?url='
-            + quote(
-                url,
-                safe=''
-            )
-        )
+            return jsonify({
+                "status": "error",
+                "error": {
+                    "code": "INVALID_URL"
+                }
+            }), 400
 
+        # Keep a server-side request id.
+        request_id = uuid.uuid4().hex
 
         return jsonify({
-
-            'status': 'success',
-
-            'url': proxy_url
-
+            "status": "success",
+            "url": (
+                request.host_url.rstrip("/")
+                + "/stream?url="
+                + requests.utils.quote(
+                    url,
+                    safe=""
+                )
+                + "&id="
+                + request_id
+            ),
         })
-
 
     except Exception as e:
 
         return jsonify({
-
-            'status': 'error',
-
-            'error': {
-                'code': str(e)
+            "status": "error",
+            "error": {
+                "code": str(e)
             }
-
         }), 500
 
 
 # =========================================================
-# STREAM / DOWNLOAD ENDPOINT
+# STREAM / ACTUAL DOWNLOAD
 # =========================================================
 
-@app.route('/stream', methods=['GET'])
+@app.route(
+    "/stream",
+    methods=["GET"]
+)
 def stream():
 
-    original_url = request.args.get(
-        'url'
-    )
+    url = (
+        request.args.get("url")
+        or ""
+    ).strip()
 
-
-    if not original_url:
+    if not url:
 
         return jsonify({
-
-            'status': 'error',
-
-            'error': {
-                'code': 'URL missing'
+            "status": "error",
+            "error": {
+                "code": "URL_REQUIRED"
             }
-
         }), 400
 
+    logger = LogCapture()
 
-    # Create temporary directory
-    temp_dir = tempfile.mkdtemp(
-        prefix='vdownloader_'
+    workdir = tempfile.mkdtemp(
+        prefix="vdownloader_"
     )
 
-
     try:
 
-        # =================================================
-        # DOWNLOAD + MERGE
-        # =================================================
-
-        output_file, filename, debug = (
-            download_and_merge(
-                original_url,
-                temp_dir
-            )
+        logger.info(
+            "Starting download for: " + url
         )
 
-
-        # =================================================
-        # ERROR
-        # =================================================
-
-        if not output_file:
-
-            shutil.rmtree(
-                temp_dir,
-                ignore_errors=True
-            )
-
-
-            return jsonify({
-
-                'status': 'error',
-
-                'error': {
-                    'code': (
-                        debug.get(
-                            'exception',
-                            'Could not download and merge the video.'
-                        )
-                        if debug
-                        else
-                        'Could not download and merge the video.'
-                    )
-                },
-
-                'debug': debug
-
-            }), 500
-
-
-        # =================================================
-        # SEND MERGED MP4
-        # =================================================
-
-        response = send_file(
-
-            output_file,
-
-            mimetype='video/mp4',
-
-            as_attachment=True,
-
-            download_name=filename,
-
-            max_age=0
-
+        result = download_video(
+            url,
+            workdir,
+            logger
         )
 
+        if not result.get("success"):
 
-        # =================================================
-        # CLEAN TEMP FILE AFTER DOWNLOAD
-        # =================================================
-
-        @response.call_on_close
-        def cleanup():
-
-            shutil.rmtree(
-                temp_dir,
-                ignore_errors=True
-            )
-
-
-        return response
-
-
-    except Exception as e:
-
-        shutil.rmtree(
-            temp_dir,
-            ignore_errors=True
-        )
-
-
-        return jsonify({
-
-            'status': 'error',
-
-            'error': {
-                'code': str(e)
+            debug_data = {
+                "logs": logger.get(),
+                "format_summary": result.get(
+                    "summary"
+                ),
             }
 
-        }), 500
+            return jsonify({
+                "status": "error",
+                "error": {
+                    "code": result.get(
+                        "error",
+                        "Download failed"
+                    )
+                },
+                "debug": debug_data
+            }), 500
 
+        path = result.get("path")
 
-# =========================================================
-# HEALTH CHECK
-# =========================================================
+        if not path or not os.path.exists(path):
 
-@app.route('/health', methods=['GET'])
-def health():
+            return jsonify({
+                "status": "error",
+                "error": {
+                    "code": "OUTPUT_FILE_NOT_FOUND"
+                },
+                "debug": {
+                    "logs": logger.get()
+                }
+            }), 500
 
-    try:
+        # -------------------------------------------------
+        # Final audio check
+        # -------------------------------------------------
 
-        ffmpeg_path = (
-            imageio_ffmpeg.get_ffmpeg_exe()
+        audio_present = has_audio_stream(
+            path
         )
 
-        ffmpeg_exists = os.path.exists(
-            ffmpeg_path
+        logger.info(
+            "Final audio check: "
+            + str(audio_present)
         )
 
+        # -------------------------------------------------
+        # If Instagram still has no audio,
+        # do NOT return silent file.
+        # -------------------------------------------------
 
-        return jsonify({
+        if (
+            is_instagram(url)
+            and not audio_present
+        ):
 
-            'status': 'ok',
+            return jsonify({
+                "status": "error",
+                "error": {
+                    "code": (
+                        "Instagram returned a video "
+                        "without an audio stream."
+                    )
+                },
+                "debug": {
+                    "logs": logger.get(),
+                    "format_summary": result.get(
+                        "summary"
+                    )
+                }
+            }), 422
 
-            'ffmpeg': ffmpeg_exists,
+        # -------------------------------------------------
+        # Determine filename
+        # -------------------------------------------------
 
-            'ffmpeg_path': ffmpeg_path,
+        ext = (
+            os.path.splitext(path)[1]
+            or ".mp4"
+        )
 
-            'deno': (
-                shutil.which('deno')
-                is not None
-            )
+        filename = (
+            "VDownloader"
+            + ext
+        )
 
-        })
+        # -------------------------------------------------
+        # Stream file
+        # -------------------------------------------------
 
+        def generate():
+
+            try:
+
+                with open(
+                    path,
+                    "rb"
+                ) as f:
+
+                    while True:
+
+                        chunk = f.read(
+                            1024 * 1024
+                        )
+
+                        if not chunk:
+                            break
+
+                        yield chunk
+
+            finally:
+
+                try:
+                    shutil.rmtree(
+                        workdir,
+                        ignore_errors=True
+                    )
+                except Exception:
+                    pass
+
+        return Response(
+            stream_with_context(
+                generate()
+            ),
+            mimetype="video/mp4",
+            headers={
+                "Content-Disposition": (
+                    'attachment; filename="'
+                    + filename
+                    + '"'
+                ),
+                "Content-Type": "video/mp4",
+                "Cache-Control": "no-store",
+                "X-VDownloader-Audio": (
+                    "yes"
+                    if audio_present
+                    else "no"
+                ),
+            }
+        )
 
     except Exception as e:
 
+        try:
+            shutil.rmtree(
+                workdir,
+                ignore_errors=True
+            )
+        except Exception:
+            pass
+
         return jsonify({
-
-            'status': 'error',
-
-            'error': str(e)
-
+            "status": "error",
+            "error": {
+                "code": str(e)
+            },
+            "debug": {
+                "logs": logger.get()
+            }
         }), 500
+
+
+# =========================================================
+# HEALTH
+# =========================================================
+
+@app.route(
+    "/health",
+    methods=["GET"]
+)
+def health():
+
+    return jsonify({
+        "status": "ok",
+        "deno": os.path.isdir(
+            DENO_PATH
+        ),
+        "ffmpeg": bool(FFMPEG),
+        "ffmpeg_path": FFMPEG,
+    })
 
 
 # =========================================================
 # RUN
 # =========================================================
 
-if __name__ == '__main__':
+if __name__ == "__main__":
 
     app.run(
-        host='0.0.0.0',
-        port=5000
+        host="0.0.0.0",
+        port=int(
+            os.environ.get(
+                "PORT",
+                10000
+            )
+        )
     )
